@@ -6,6 +6,11 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   emailVerified: { type: Boolean, default: true },
   password: { type: String, required: true, minlength: 12, maxlength: 72 },
+  role: { type: String, enum: ['user', 'admin'], default: 'user' },
+  disabled: { type: Boolean, default: false },
+  hitsBalance: { type: Number, min: 0, default: 0 },
+  hitsUsed: { type: Number, min: 0, default: 0 },
+  signupFingerprint: { type: String, select: false },
 }, { timestamps: true });
 
 userSchema.pre('save', async function (next) {

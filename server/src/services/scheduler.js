@@ -3,6 +3,7 @@ const Product = require('../models/Product');
 const User = require('../models/User');
 const { scrape } = require('./scraper');
 const { sendPriceDrop } = require('./mailer');
+const CreditTransaction = require('../models/CreditTransaction');
 
 const PERIOD_MS = { day: 864e5, week: 7 * 864e5, month: 30 * 864e5 };
 const MIN_INTERVAL_MS = 5 * 60 * 1000; // never hit a site more often than every 5 minutes
@@ -26,6 +27,34 @@ async function checkProduct(product, { force = false } = {}) {
     error.status = 409;
     throw error;
   }
+  const billingSession = await require('mongoose').startSession();
+  try {
+    await billingSession.withTransaction(async () => {
+      const user = await User.findOneAndUpdate(
+        { _id: product.user, disabled: false, hitsBalance: { $gt: 0 } },
+        { $inc: { hitsBalance: -1, hitsUsed: 1 } }, { new: true, session: billingSession },
+      );
+      if (!user) {
+        const account = await User.findById(product.user).select('disabled hitsBalance').session(billingSession);
+        if (!account || account.disabled) throw Object.assign(new Error('This account is unavailable. Contact support if you need help.'), { status: 403, noAccess: true });
+        throw Object.assign(new Error('You are out of price check credits. Buy a hit pack to continue tracking.'), { status: 402, noCredits: true });
+      }
+      await CreditTransaction.create([{
+        user: user._id, kind: 'usage', hits: -1, balanceAfter: user.hitsBalance, product: product._id,
+        reason: 'Product price check',
+      }], { session: billingSession });
+    });
+  } catch (error) {
+    product.checkLockUntil = null;
+    if (error.noCredits || error.noAccess) {
+      product.active = false;
+      product.lastError = error.noCredits
+        ? 'Paused because your price check credits ran out. Buy a hit pack, then resume this product.'
+        : 'Paused because this account is unavailable. Contact support to resume tracking.';
+      await product.save();
+    } else await product.save();
+    throw error;
+  } finally { await billingSession.endSession(); }
   try {
     const { price, currency, title } = await scrape(product.url, product.selector);
     const previous = product.currentPrice;

@@ -1,6 +1,6 @@
 # Price Tracker
 
-**Current version: 1.0.2.** Release history is in [docs/CHANGELOG.md](docs/CHANGELOG.md).
+**Current version: 1.0.4.** Release history is in [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 Add product URLs, choose how often to check them, and receive an email when a price drops below its previous recorded price. New accounts verify their email before they can sign in.
 
@@ -21,6 +21,12 @@ The API runs at `http://localhost:5000`; Vite serves the client at `http://local
 ### Email setup
 
 SMTP is optional in development; without it, the app logs a preview instead of sending. Production startup requires `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS`. For Gmail, use an app password.
+
+### Memberships and Stripe (local testing)
+
+The app sells one-time credit packs: $1 for 100 checks, $10 for 1,000 checks, and $1,000 for 10,000 checks. Set Stripe test credentials in `server/.env`. Create a Stripe webhook endpoint for `/api/payments/webhook` listening to `checkout.session.completed` and `checkout.session.async_payment_succeeded`, then put its signing secret in `STRIPE_WEBHOOK_SECRET`. For local webhook forwarding, use Stripe CLI: `stripe listen --forward-to localhost:5000/api/payments/webhook`. Set `ADMIN_EMAILS` to a comma-separated list of account emails; create and verify those accounts to grant admin console access.
+
+New accounts receive 20 free checks after email verification if the signup network has not already claimed the starter offer. The server limits this to one grant per IPv4 `/24` or IPv6 `/64` network.
 
 ## Production deployment
 

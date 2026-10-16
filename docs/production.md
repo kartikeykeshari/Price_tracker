@@ -13,6 +13,9 @@ Create `server/.env` from `server/.env.example` using the deployment's secret ma
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, and `SMTP_PASS`; production startup fails without these settings.
 - `PORT` if the host requires a specific listening port.
 - `TRUST_PROXY_HOPS` only when behind a known reverse proxy. Set it to the number of trusted proxy hops; leave it at `0` when users connect directly.
+- `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` from the correct Stripe environment (test or live). Keep both server-side. Register `https://your-domain/api/payments/webhook` in Stripe for `checkout.session.completed` and `checkout.session.async_payment_succeeded`.
+- `ADMIN_EMAILS` as a comma-separated list of exact, verified account emails that should receive admin access. The server grants the admin role only to these configured addresses.
+- `FREE_TRIAL_SECRET` as a separate stable secret of at least 32 random bytes. It HMACs signup network prefixes for the one-time starter offer; do not rotate it casually, because old fingerprints will no longer match.
 
 Never use `*` for the browser origin. The API sets an HttpOnly, Secure, SameSite session cookie in production, checks browser request origins, and only accepts the configured client origin.
 
@@ -20,7 +23,7 @@ New accounts must verify their email address before signing in. Provide a workin
 
 ## 2. Prepare MongoDB
 
-Use a dedicated database user with only the required database permissions, restrict network access to the application, enable encrypted connections where supported, and configure tested backups and retention. Ensure Mongoose indexes are created before opening traffic. Indexes support unique user emails, unique product URLs per user, due-check lookups, and expiry of rate-limit buckets.
+Use a dedicated database user with only the required database permissions, restrict network access to the application, enable encrypted connections where supported, and configure tested backups and retention. Use a MongoDB replica set or Atlas cluster: purchase fulfillment and hit charging use MongoDB transactions so a payment or check cannot update the balance without its audit record. Ensure Mongoose indexes are created before opening traffic. Indexes support unique user emails, unique product URLs per user, idempotent Stripe events and checkout sessions, due-check lookups, and expiry of rate-limit buckets.
 
 Rate limits and scheduled work coordination are stored in MongoDB, so they work across application instances. Scheduler locks expire if a worker stops unexpectedly. Price-drop emails are queued on product documents and retried with backoff; delivery is at least once and may duplicate if the mail provider accepts a message just before a worker stops.
 
@@ -42,6 +45,16 @@ The scraper accepts only HTTP(S), rejects credentials and nonstandard ports, res
 
 Scraping is best-effort. Target sites may block automated requests, change page markup, or require JavaScript. The product CSS selector and parser errors help diagnose pages, but the application does not guarantee price accuracy or alert timing. Follow each site's terms and applicable laws.
 
-## 5. Release tracking
+## 5. Payments and memberships
 
-The `v1.0.1` Git tag is the published baseline. Version `1.0.2` adds the protections and operational guidance in [CHANGELOG.md](CHANGELOG.md). Users upgrading from 1.0.1 should sign in again because sessions now use HttpOnly cookies instead of browser local storage.
+The server owns the three USD one-time credit packs and their amounts. Checkout creates a Stripe-hosted payment session from that fixed catalog; it does not accept a client-supplied price or hit count. Credits are granted only after the signed Stripe webhook reports a paid session whose user, plan, currency, and amount match the server catalog. Webhook events and Checkout Session IDs are persisted with unique indexes, and the credit ledger is updated in the same MongoDB transaction as the balance. The success redirect is informational and never grants credits.
+
+Each product scrape attempt consumes one hit immediately before the outbound request, including attempts where the target site fails or the page cannot be parsed. Products pause when an account runs out of credits. Admin grants and account disable actions require an admin account from `ADMIN_EMAILS`; each grant is recorded in the credit ledger. Configure Stripe refunds and chargebacks for operational review: this release does not automatically claw back already-used hits.
+
+The prices are implemented as requested: $1/100, $10/1,000, and $1,000/10,000. That makes the 10,000-hit pack ten times more expensive per hit than the other two packs; confirm this pricing before enabling live payments.
+
+New users receive 20 starter hits after verifying their email, limited to one verified claim per IPv4 `/24` or IPv6 `/64` network. The starter-claim record stores an HMAC of that network prefix rather than the raw IP address. Shared networks can therefore share one starter allowance, and people using different networks can still evade this check; add a CAPTCHA or phone verification provider if stronger signup abuse controls are needed. Existing accounts are not automatically granted the promotion.
+
+## 6. Release tracking
+
+The `v1.0.1` Git tag is the published baseline. Version `1.0.2` adds the protections in [CHANGELOG.md](CHANGELOG.md); version `1.0.3` adds Stripe credit packs, server-side hit accounting, and the admin console; version `1.0.4` adds one-time starter credits with network-based duplicate-claim controls. Users upgrading from 1.0.1 should sign in again because sessions now use HttpOnly cookies instead of browser local storage.

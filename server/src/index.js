@@ -17,6 +17,10 @@ function validateConfig() {
       throw new Error('CLIENT_URL must be a valid HTTPS origin without a path');
     if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS)
       throw new Error('SMTP_HOST, SMTP_USER and SMTP_PASS are required in production');
+    if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET || !process.env.ADMIN_EMAILS)
+      throw new Error('STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and ADMIN_EMAILS are required in production');
+    if (!process.env.FREE_TRIAL_SECRET || Buffer.byteLength(process.env.FREE_TRIAL_SECRET, 'utf8') < 32)
+      throw new Error('FREE_TRIAL_SECRET must be at least 32 bytes in production');
   }
 }
 
@@ -47,12 +51,14 @@ app.use((req, res, next) => {
   if (process.env.NODE_ENV === 'production') res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
-app.use(express.json({ limit: '20kb' }));
+app.use((req, res, next) => req.path === '/api/payments/webhook' ? next() : express.json({ limit: '20kb' })(req, res, next));
+app.use('/api/payments', require('./routes/payments'));
 const apiLimit = rateLimit({ name: 'api', limit: 300, windowMs: 15 * 60 * 1000 });
 app.use('/api', (req, res, next) => req.path === '/health' ? next() : apiLimit(req, res, next));
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/products', require('./routes/products'));
+app.use('/api/admin', require('./routes/admin'));
 app.get('/api/health', (_, res) => {
   const healthy = mongoose.connection.readyState === 1;
   res.status(healthy ? 200 : 503).json({ ok: healthy });
@@ -87,8 +93,16 @@ process.once('SIGINT', () => shutdown('SIGINT'));
 process.on('unhandledRejection', (error) => { console.error('Unhandled rejection', error); shutdown('unhandledRejection', 1); });
 
 mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 10000 })
-  .then(() => {
+  .then(async () => {
     console.log('MongoDB connected');
+    const criticalModels = [
+      require('./models/User'), require('./models/Product'), require('./models/FreeTrialClaim'),
+      require('./models/CreditTransaction'), require('./models/StripeEvent'),
+    ];
+    await Promise.all(criticalModels.map((model) => model.init()));
+    console.log('Account and credit indexes ready');
+    const adminEmails = (process.env.ADMIN_EMAILS || '').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
+    if (adminEmails.length) await require('./models/User').updateMany({ email: { $in: adminEmails } }, { $set: { role: 'admin' } });
     startScheduler();
     httpServer = app.listen(process.env.PORT || 5000, () => console.log(`API on :${process.env.PORT || 5000}`));
     httpServer.headersTimeout = 15000;

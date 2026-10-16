@@ -25,4 +25,10 @@ export const api = {
   update: (id, b) => call(`/products/${id}`, 'PATCH', b),
   check: (id) => call(`/products/${id}/check`, 'POST'),
   remove: (id) => call(`/products/${id}`, 'DELETE'),
+  plans: () => call('/payments/plans'),
+  checkout: (planId) => call('/payments/checkout', 'POST', { planId }),
+  adminUsers: () => call('/admin/users'),
+  adminCredits: (id) => call(`/admin/users/${id}/credits`),
+  adminUpdateUser: (id, disabled) => call(`/admin/users/${id}`, 'PATCH', { disabled }),
+  adminGrant: (id, planId) => call(`/admin/users/${id}/grant`, 'POST', { planId }),
 };

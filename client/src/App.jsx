@@ -128,6 +128,7 @@ function Auth({ onAuth, initialNotice }) {
       </section>
       <form className="auth-card" onSubmit={submit}>
         <h2>{mode === 'login' ? 'Sign in' : 'Create your account'}</h2>
+        {mode === 'register' && <p className="muted small">Verify your email to receive 20 free price checks. The starter offer is limited to one account per network.</p>}
         {mode === 'register' && <label>Name<input required value={f.name} onChange={set('name')} /></label>}
         <label>Email (price alerts go here)<input type="email" autoComplete="email" required value={f.email} onChange={set('email')} /></label>
         <label>Password<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required minLength={mode === 'register' ? 12 : 1} value={f.password} onChange={set('password')} /></label>
@@ -160,7 +161,9 @@ function AddForm({ onAdded }) {
     try {
       const list = urls.split(/[\n,\s]+/).map((u) => u.trim()).filter(Boolean);
       const r = await api.add({ urls: list, frequency: { count: Number(count), period }, selector });
-      setMsg({ ok: true, text: `Added ${r.added.length} product(s).` + (r.skipped.length ? ` Skipped: ${r.skipped.map((s) => `${host(s.url)} (${s.reason})`).join(', ')}` : '') });
+      const addedText = `Added ${r.added.length} ${r.added.length === 1 ? 'product' : 'products'}.`;
+      const skippedText = r.skipped.length ? ` Could not add: ${r.skipped.map((s) => `${host(s.url)}: ${s.reason}`).join(' ')}` : '';
+      setMsg({ ok: r.skipped.length === 0, text: `${addedText}${skippedText}` });
       if (r.added.length) { setUrls(''); onAdded(); }
     } catch (x) { setMsg({ ok: false, text: x.message }); }
     setBusy(false);
@@ -245,11 +248,70 @@ function Item({ p, reload }) {
   );
 }
 
+function Membership({ user, refresh }) {
+  const [plans, setPlans] = useState([]);
+  const [busy, setBusy] = useState('');
+  const [message, setMessage] = useState('');
+  useEffect(() => { api.plans().then((r) => setPlans(r.plans)).catch((e) => setMessage(e.message)); }, []);
+  const buy = async (plan) => {
+    setBusy(plan.id); setMessage('');
+    try {
+      const { url } = await api.checkout(plan.id);
+      const target = new URL(url);
+      if (target.protocol !== 'https:' || target.hostname !== 'checkout.stripe.com') throw new Error('Secure payment page could not be opened. Please try again.');
+      window.location.assign(target.href);
+    } catch (e) { setMessage(e.message); setBusy(''); }
+  };
+  return <section className="panel membership">
+    <div className="membership-head"><div><h2>Price check credits</h2><p className="muted small">{user.hitsBalance || 0} available · {user.hitsUsed || 0} used</p></div>
+      <span className="credit-pill">{user.hitsBalance || 0} hits</span></div>
+    <div className="plan-list">{plans.map((p) => <article className="plan-card" key={p.id}>
+      <div><strong>{p.name}</strong><div className="muted small">{p.hits.toLocaleString()} price checks</div></div>
+      <strong>${p.price.toLocaleString('en-US')}</strong>
+      <button className="chip solid" disabled={!!busy} onClick={() => buy(p)}>{busy === p.id ? 'Opening…' : 'Buy pack'}</button>
+    </article>)}</div>
+    <p className="muted small membership-note">One check is charged each time we start checking a product. Credits are one-time purchases and do not expire.</p>
+    {message && <p className="error small" role="alert">{message}</p>}
+  </section>;
+}
+
+function AdminConsole() {
+  const [users, setUsers] = useState([]);
+  const [plans, setPlans] = useState([]);
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [ledger, setLedger] = useState([]);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const refresh = useCallback(async () => { const r = await api.adminUsers(); setUsers(r.users); }, []);
+  useEffect(() => { refresh().catch((e) => setError(e.message)); api.plans().then((r) => setPlans(r.plans)).catch(() => {}); }, [refresh]);
+  const run = async (key, fn) => { setBusy(key); setError(''); try { await fn(); await refresh(); } catch (e) { setError(e.message); } finally { setBusy(''); } };
+  const openLedger = async (user) => { setSelected(user); try { setLedger((await api.adminCredits(user._id)).transactions); } catch (e) { setError(e.message); } };
+  const visible = users.filter((u) => `${u.name} ${u.email}`.toLowerCase().includes(query.toLowerCase()));
+  return <section className="panel admin-panel">
+    <div className="membership-head"><div><h2>Admin console</h2><p className="muted small">Manage accounts and hit balances</p></div><button className="chip" onClick={() => run('refresh', refresh)}>Refresh</button></div>
+    {error && <p className="error small" role="alert">{error}</p>}
+    <label className="admin-search">Find a user<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or email" /></label>
+    <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>User</th><th>Credits</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+      {visible.map((u) => <tr key={u._id}><td><strong>{u.name}</strong><small>{u.email}</small></td><td>{u.hitsBalance} available<br/><small>{u.hitsUsed} used</small></td><td>{u.disabled ? 'Disabled' : u.emailVerified ? 'Active' : 'Email unverified'}</td><td><div className="admin-actions">
+        <button className="chip" onClick={() => openLedger(u)}>History</button>
+        <select aria-label={`Grant credits to ${u.email}`} value="" disabled={!!busy} onChange={(e) => { const planId = e.target.value; if (planId) run(`grant-${u._id}`, () => api.adminGrant(u._id, planId)); }}><option value="">Grant pack…</option>{plans.map((p) => <option key={p.id} value={p.id}>{p.hits.toLocaleString()} hits</option>)}</select>
+        <button className="chip" disabled={!!busy} onClick={() => run(`user-${u._id}`, () => api.adminUpdateUser(u._id, !u.disabled))}>{u.disabled ? 'Enable' : 'Disable'}</button>
+      </div></td></tr>)}
+    </tbody></table></div>
+    {visible.length === 0 && <p className="muted">No matching users.</p>}
+    {selected && <div className="ledger"><div className="membership-head"><strong>Credit history · {selected.email}</strong><button className="chip" onClick={() => setSelected(null)}>Close</button></div>
+      {ledger.length ? <ul>{ledger.map((entry) => <li key={entry._id}><span>{entry.kind.replace('_', ' ')} · {entry.reason || entry.planId || '—'}</span><strong>{entry.hits > 0 ? '+' : ''}{entry.hits}</strong><small>{new Date(entry.createdAt).toLocaleString()} · balance {entry.balanceAfter}</small></li>)}</ul> : <p className="muted small">No credit activity yet.</p>}
+    </div>}
+  </section>;
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
   const [items, setItems] = useState([]);
   const [verificationNotice, setVerificationNotice] = useState(null);
+  const [checkoutNotice, setCheckoutNotice] = useState('');
 
   const load = useCallback(async () => { try { setItems(await api.list()); } catch { /* handled in api */ } }, []);
 
@@ -267,6 +329,12 @@ export default function App() {
     }
   }, []);
   useEffect(() => {
+    const checkout = new URLSearchParams(window.location.search).get('checkout');
+    if (!checkout) return;
+    setCheckoutNotice(checkout === 'success' ? 'Payment submitted. Credits appear after Stripe confirms the payment.' : 'Payment was cancelled. No credits were charged.');
+    window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+  }, []);
+  useEffect(() => {
     const expire = () => { setUser(null); setItems([]); };
     window.addEventListener('session-expired', expire);
     return () => window.removeEventListener('session-expired', expire);
@@ -274,7 +342,8 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     load();
-    const t = setInterval(load, 30000);
+    const sync = async () => { load(); try { const r = await api.me(); setUser(r.user); } catch { /* handled by api */ } };
+    const t = setInterval(sync, 15000);
     return () => clearInterval(t);
   }, [user, load]);
 
@@ -286,8 +355,10 @@ export default function App() {
       <header className="top">
         <strong className="brand">Price Tracker</strong>
         <span className="muted small">Alerts go to {user.email}</span>
+        <span className="muted small">{user.hitsBalance || 0} checks available</span>
         <button className="link" onClick={async () => { try { await api.logout(); } finally { setUser(null); setItems([]); } }}>Sign out</button>
       </header>
+      {checkoutNotice && <p className="panel checkout-notice" role="status">{checkoutNotice}</p>}
       <div className="grid">
         <AddForm onAdded={load} />
         <section className="panel">
@@ -297,6 +368,8 @@ export default function App() {
             : <ul className="list">{items.map((p) => <Item key={p._id} p={p} reload={load} />)}</ul>}
         </section>
       </div>
+      <Membership user={user} refresh={async () => { const r = await api.me(); setUser(r.user); }} />
+      {user.role === 'admin' && <AdminConsole />}
     </div>
   );
 }
