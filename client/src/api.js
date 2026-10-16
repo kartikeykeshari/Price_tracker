@@ -1,13 +1,13 @@
 const call = async (path, method = 'GET', body) => {
-  const token = localStorage.getItem('token');
   const res = await fetch(`/api${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401 && token) { localStorage.removeItem('token'); window.location.reload(); }
+    if (res.status === 401) window.dispatchEvent(new Event('session-expired'));
     throw new Error(data.message || 'Something went wrong');
   }
   return data;
@@ -16,6 +16,9 @@ const call = async (path, method = 'GET', body) => {
 export const api = {
   register: (b) => call('/auth/register', 'POST', b),
   login: (b) => call('/auth/login', 'POST', b),
+  resendVerification: (b) => call('/auth/resend-verification', 'POST', b),
+  verifyEmail: (token) => call('/auth/verify-email', 'POST', { token }),
+  logout: () => call('/auth/logout', 'POST'),
   me: () => call('/auth/me'),
   list: () => call('/products'),
   add: (b) => call('/products', 'POST', b),

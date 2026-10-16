@@ -1,5 +1,11 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
+const http = require('node:http');
+const https = require('node:https');
+const { validatePublicUrl, publicLookup } = require('./safeUrl');
+
+const httpAgent = new http.Agent({ lookup: publicLookup });
+const httpsAgent = new https.Agent({ lookup: publicLookup });
 
 const SYMBOLS = { '₹': 'INR', '$': 'USD', '€': 'EUR', '£': 'GBP', '¥': 'JPY' };
 
@@ -53,15 +59,36 @@ const KNOWN_SELECTORS = [
 ];
 
 async function scrape(url, customSelector) {
-  const { data: html } = await axios.get(url, {
-    timeout: 20000,
-    maxRedirects: 5,
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-      'Accept-Language': 'en-US,en;q=0.9',
-      Accept: 'text/html,application/xhtml+xml',
-    },
-  });
+  let currentUrl = url, response;
+  const deadline = Date.now() + 45000;
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const timeout = Math.min(20000, deadline - Date.now());
+    if (timeout <= 0) throw new Error('Product page timed out');
+    const safe = await validatePublicUrl(currentUrl);
+    response = await axios.get(safe.href, {
+      timeout,
+      maxRedirects: 0,
+      maxContentLength: 5 * 1024 * 1024,
+      responseType: 'text',
+      validateStatus: () => true,
+      proxy: false,
+      httpAgent,
+      httpsAgent,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        Accept: 'text/html,application/xhtml+xml',
+      },
+    });
+    if (response.status >= 300 && response.status < 400 && response.headers.location) {
+      if (redirects === 5) throw new Error('Product page redirected too many times');
+      currentUrl = new URL(response.headers.location, safe).href;
+      continue;
+    }
+    if (response.status < 200 || response.status >= 300) throw new Error(`Product page returned HTTP ${response.status}`);
+    break;
+  }
+  const html = response.data;
   const $ = cheerio.load(html);
   const title = ($('meta[property="og:title"]').attr('content') || $('title').text() || '').trim().slice(0, 200);
   let price = null, currency = '';

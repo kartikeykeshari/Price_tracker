@@ -16,9 +16,18 @@ const productSchema = new mongoose.Schema({
   },
   active: { type: Boolean, default: true },
   nextCheckAt: { type: Date, default: Date.now, index: true },
+  checkLockUntil: { type: Date, default: null, index: true },
   lastCheckedAt: Date,
   lastError: { type: String, default: '' },
   history: [{ price: Number, at: { type: Date, default: Date.now }, _id: false }],
+  pendingAlerts: [{
+    oldPrice: { type: Number, required: true },
+    newPrice: { type: Number, required: true },
+    createdAt: { type: Date, default: Date.now },
+    nextAttemptAt: { type: Date, default: Date.now },
+    attempts: { type: Number, default: 0 },
+    _id: false,
+  }],
 }, { timestamps: true });
 
 productSchema.index({ user: 1, url: 1 }, { unique: true });

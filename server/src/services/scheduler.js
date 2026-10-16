@@ -11,8 +11,21 @@ const MIN_INTERVAL_MS = 5 * 60 * 1000; // never hit a site more often than every
 const intervalMs = (f) => PERIOD_MS[f.period] / f.count;
 const isAllowed = (f) => intervalMs(f) >= MIN_INTERVAL_MS;
 
-async function checkProduct(product) {
+async function checkProduct(product, { force = false } = {}) {
   const now = new Date();
+  const claim = {
+    _id: product._id,
+    $or: [{ checkLockUntil: null }, { checkLockUntil: { $lte: now } }],
+  };
+  if (!force) Object.assign(claim, { active: true, nextCheckAt: { $lte: now } });
+  product = await Product.findOneAndUpdate(claim, {
+    $set: { checkLockUntil: new Date(now.getTime() + 90 * 1000) },
+  }, { new: true });
+  if (!product) {
+    const error = new Error('A price check is already running or not due yet');
+    error.status = 409;
+    throw error;
+  }
   try {
     const { price, currency, title } = await scrape(product.url, product.selector);
     const previous = product.currentPrice;
@@ -29,38 +42,84 @@ async function checkProduct(product) {
     product.lastError = '';
 
     if (previous != null && price < previous) {
-      const user = await User.findById(product.user);
-      if (user) {
-        try { await sendPriceDrop({ user, product, oldPrice: previous, newPrice: price }); }
-        catch (e) { console.error('Mail failed:', e.message); }
-      }
+      if (product.pendingAlerts.length < 100) product.pendingAlerts.push({ oldPrice: previous, newPrice: price, createdAt: now, nextAttemptAt: now });
+      else product.lastError = 'Price alert queue is full; contact support';
     }
   } catch (e) {
     product.lastError = e.message.slice(0, 300);
   }
   product.lastCheckedAt = now;
   product.nextCheckAt = new Date(now.getTime() + intervalMs(product.frequency));
+  product.checkLockUntil = null;
   await product.save();
+  if (product.pendingAlerts.length) deliverPendingAlerts(product._id).catch((e) => console.error('Alert delivery error:', e.message));
   return product;
 }
 
+async function deliverPendingAlerts(productId) {
+  const now = new Date();
+  let product = await Product.findOneAndUpdate({
+    _id: productId,
+    $or: [{ checkLockUntil: null }, { checkLockUntil: { $lte: now } }],
+  }, { $set: { checkLockUntil: new Date(now.getTime() + 90 * 1000) } }, { new: true });
+  if (!product) return;
+  try {
+    let sent = 0;
+    while (product.pendingAlerts.length && sent < 3) {
+      const alert = product.pendingAlerts[0];
+      if (alert.nextAttemptAt > new Date()) break;
+      const user = await User.findById(product.user);
+      if (!user) { product.pendingAlerts.shift(); await product.save(); continue; }
+      try {
+        await sendPriceDrop({ user, product, oldPrice: alert.oldPrice, newPrice: alert.newPrice });
+        product.pendingAlerts.shift();
+        sent += 1;
+      } catch (error) {
+        alert.attempts += 1;
+        const delay = Math.min(6 * 60 * 60 * 1000, 5 * 60 * 1000 * (2 ** Math.min(alert.attempts - 1, 7)));
+        alert.nextAttemptAt = new Date(Date.now() + delay);
+        product.lastError = `Price alert email pending retry: ${error.message}`.slice(0, 300);
+        console.error('Mail failed; alert queued for retry:', error.message);
+        await product.save();
+        return;
+      }
+      await product.save();
+    }
+  } finally {
+    product.checkLockUntil = null;
+    await product.save();
+  }
+}
+
 let running = false;
+let cronTask;
 async function runDue() {
   if (running) return;
   running = true;
   try {
-    const due = await Product.find({ active: true, nextCheckAt: { $lte: new Date() } }).limit(50);
-    for (const p of due) {
-      await checkProduct(p);
+    const now = new Date();
+    const due = await Product.find({ active: true, nextCheckAt: { $lte: now } }).limit(50);
+    const alerts = await Product.find({ pendingAlerts: { $elemMatch: { nextAttemptAt: { $lte: now } } } }).limit(50);
+    const work = new Map([...due, ...alerts].map((p) => [String(p._id), p]));
+    for (const p of work.values()) {
+      if (p.active && p.nextCheckAt <= now) {
+        try { await checkProduct(p); }
+        catch (e) { if (e.status !== 409) console.error('Product check failed', e.message); }
+      } else {
+        try { await deliverPendingAlerts(p._id); }
+        catch (e) { console.error('Alert delivery error:', e.message); }
+      }
       await new Promise((r) => setTimeout(r, 1500)); // be polite between requests
     }
   } catch (e) { console.error('Scheduler error', e.message); }
-  running = false;
+  finally { running = false; }
 }
 
 function startScheduler() {
-  cron.schedule('* * * * *', runDue); // ticks every minute; each product has its own nextCheckAt
+  cronTask = cron.schedule('* * * * *', runDue); // ticks every minute; each product has its own nextCheckAt
   console.log('Scheduler started');
 }
 
-module.exports = { startScheduler, checkProduct, intervalMs, isAllowed };
+function stopScheduler() { if (cronTask) cronTask.stop(); }
+
+module.exports = { startScheduler, stopScheduler, checkProduct, intervalMs, isAllowed };

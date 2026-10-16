@@ -6,6 +6,9 @@ const transporter = configured
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT) || 587,
       secure: Number(process.env.SMTP_PORT) === 465,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     })
   : nodemailer.createTransport({ jsonTransport: true });   // dev fallback: logs the mail
@@ -53,4 +56,19 @@ async function sendPriceDrop(args) {
   return info;
 }
 
-module.exports = { sendPriceDrop };
+async function sendVerificationEmail({ user, link }) {
+  const html = `<!doctype html><html><body style="font-family:Segoe UI,Arial,sans-serif;color:#10211f">
+    <h2>Verify your Price Tracker email</h2><p>Hi ${esc(user.name)}, confirm that this email belongs to you to start tracking products and receive alerts.</p>
+    <p><a href="${esc(link)}">Verify email address</a></p><p>This link expires in 24 hours.</p></body></html>`;
+  const info = await transporter.sendMail({
+    from: process.env.MAIL_FROM || process.env.SMTP_USER || 'tracker@localhost',
+    to: user.email,
+    subject: 'Verify your Price Tracker email',
+    html,
+    text: `Verify your email address: ${link}\nThis link expires in 24 hours.`,
+  });
+  if (!configured) console.log('[mail:dev-mode] verification link for', user.email, link);
+  return info;
+}
+
+module.exports = { sendPriceDrop, sendVerificationEmail };

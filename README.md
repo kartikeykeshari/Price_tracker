@@ -1,41 +1,43 @@
-# Price Tracker (MERN)
+# Price Tracker
 
-Add product URLs, choose how many times per day / week / month to check, and get a formatted
-email whenever a price falls below the previous price.
+**Current version: 1.0.2.** Release history is in [docs/CHANGELOG.md](docs/CHANGELOG.md).
+
+Add product URLs, choose how often to check them, and receive an email when a price drops below its previous recorded price. New accounts verify their email before they can sign in.
 
 ## Run locally
-Requirements: Node 18+, MongoDB (local, Atlas, or `docker compose up -d`).
+
+Requirements: Node.js 18 or later and MongoDB (local, Atlas, or `docker compose up -d`).
 
 ```bash
 npm run install:all
-cp server/.env.example server/.env     # then edit values
-npm run server        # terminal 1 -> http://localhost:5000
-npm run client        # terminal 2 -> http://localhost:5173
+cp server/.env.example server/.env
+# Edit server/.env and set a random JWT_SECRET of at least 32 bytes.
+npm run server
+npm run client
 ```
+
+The API runs at `http://localhost:5000`; Vite serves the client at `http://localhost:5173` and proxies `/api` requests.
 
 ### Email setup
-Fill the SMTP_* values in `server/.env`. For Gmail turn on 2-step verification and create an
-App Password. If SMTP is not set, emails are only logged to the console (dev mode).
 
-### Using it
-1. Register (this email receives alerts) and sign in.
-2. Paste one or more product URLs, set e.g. "3 times per day", click **Start tracking**.
-3. The first price is read immediately. After that each product is checked on its own schedule.
-4. If a new price < the previous price, an HTML email is sent.
+SMTP is optional in development; without it, the app logs a preview instead of sending. Production startup requires `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS`. For Gmail, use an app password.
 
-### Notes
-- Price detection order: your CSS selector → JSON-LD → meta tags → common price selectors.
-  Sites that render prices with JavaScript only, or block bots (Amazon/Flipkart often do), may fail;
-  the error shows on the product. For those, swap `axios+cheerio` in `server/src/services/scraper.js`
-  for Puppeteer/Playwright or a scraping API.
-- Minimum interval between checks is 5 minutes. Check each site's terms of service.
-- To test an email quickly: add a product, then in MongoDB set its `currentPrice` higher than
-  the real price and click **Check now**.
-- Production: set a strong `JWT_SECRET`, run `npm run build --prefix client` and serve `client/dist`.
+## Production deployment
 
-## Structure
-```
-server/src  models/ routes/ services/(scraper, mailer, scheduler) middleware/
+See [docs/production.md](docs/production.md) before deployment. At minimum, configure HTTPS, a same-site client/API origin, a strong `JWT_SECRET`, authenticated and backed-up MongoDB, SMTP, and outbound network restrictions. Build the client with `npm run build --prefix client` and serve `client/dist` through your HTTPS web server or reverse proxy.
+
+## Application behavior
+
+- The first successful price check is started after a product is added. Scheduled checks run once a minute and respect each product's chosen interval, with a five-minute minimum.
+- The price-history chart records the first successful check and later price changes, up to 500 points per product.
+- Price detection tries the custom CSS selector, JSON-LD, metadata, then common selectors. JavaScript-rendered pages and bot-protected stores may need a browser-based scraper or scraping provider.
+- The server rejects private and reserved network destinations when fetching product pages, including destinations reached through redirects. Configure host-level egress restrictions as an additional boundary.
+- Each site has its own terms and access rules; check them before tracking.
+
+## Project structure
+
+```text
+server/src  models/ routes/ services/ middleware/
 client/src  App.jsx api.js styles.css
-docs/       architecture.svg, architecture.md
+docs/       architecture.md production.md CHANGELOG.md
 ```

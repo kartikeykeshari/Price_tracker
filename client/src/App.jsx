@@ -96,19 +96,26 @@ function PriceHistory({ product, onClose }) {
   );
 }
 
-function Auth({ onAuth }) {
+function Auth({ onAuth, initialNotice }) {
   const [mode, setMode] = useState('login');
   const [f, setF] = useState({ name: '', email: '', password: '' });
   const [err, setErr] = useState('');
+  const [notice, setNotice] = useState(initialNotice || null);
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
   const submit = async (e) => {
     e.preventDefault(); setErr(''); setBusy(true);
     try {
-      const r = mode === 'login' ? await api.login(f) : await api.register(f);
-      localStorage.setItem('token', r.token);
-      onAuth(r.user);
+      if (mode === 'login') {
+        const r = await api.login(f);
+        onAuth(r.user);
+      } else {
+        await api.register(f);
+        setMode('login');
+        setNotice({ ok: true, text: 'We sent a verification link to your email. Verify it before signing in.' });
+        setF({ ...f, password: '' });
+      }
     } catch (x) { setErr(x.message); }
     setBusy(false);
   };
@@ -122,9 +129,15 @@ function Auth({ onAuth }) {
       <form className="auth-card" onSubmit={submit}>
         <h2>{mode === 'login' ? 'Sign in' : 'Create your account'}</h2>
         {mode === 'register' && <label>Name<input required value={f.name} onChange={set('name')} /></label>}
-        <label>Email (price alerts go here)<input type="email" required value={f.email} onChange={set('email')} /></label>
-        <label>Password<input type="password" required minLength={6} value={f.password} onChange={set('password')} /></label>
+        <label>Email (price alerts go here)<input type="email" autoComplete="email" required value={f.email} onChange={set('email')} /></label>
+        <label>Password<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required minLength={mode === 'register' ? 12 : 1} value={f.password} onChange={set('password')} /></label>
         {err && <p className="error" role="alert">{err}</p>}
+        {notice && <p className={notice.ok ? 'ok' : 'error'} role="status">{notice.text}</p>}
+        {mode === 'login' && err.toLowerCase().includes('verify your email') && <button type="button" className="link" onClick={async () => {
+          setErr(''); setNotice(null);
+          try { const r = await api.resendVerification({ email: f.email }); setNotice({ ok: true, text: r.message }); }
+          catch (x) { setNotice({ ok: false, text: x.message }); }
+        }}>Resend verification email</button>}
         <button className="btn" disabled={busy}>{busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}</button>
         <button type="button" className="link" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setErr(''); }}>
           {mode === 'login' ? 'New here? Create an account' : 'Have an account? Sign in'}
@@ -236,12 +249,27 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
   const [items, setItems] = useState([]);
+  const [verificationNotice, setVerificationNotice] = useState(null);
 
   const load = useCallback(async () => { try { setItems(await api.list()); } catch { /* handled in api */ } }, []);
 
   useEffect(() => {
-    if (!localStorage.getItem('token')) return setReady(true);
-    api.me().then((r) => setUser(r.user)).catch(() => localStorage.removeItem('token')).finally(() => setReady(true));
+    localStorage.removeItem('token'); // Clear the 1.0.1 bearer token after upgrading to cookie sessions.
+    const token = new URLSearchParams(window.location.hash.slice(1)).get('verify');
+    if (token) {
+      window.history.replaceState({}, '', window.location.pathname);
+      api.verifyEmail(token)
+        .then((r) => setVerificationNotice({ ok: true, text: r.message }))
+        .catch((error) => setVerificationNotice({ ok: false, text: error.message }))
+        .finally(() => api.me().then((r) => setUser(r.user)).catch(() => setUser(null)).finally(() => setReady(true)));
+    } else {
+      api.me().then((r) => setUser(r.user)).catch(() => setUser(null)).finally(() => setReady(true));
+    }
+  }, []);
+  useEffect(() => {
+    const expire = () => { setUser(null); setItems([]); };
+    window.addEventListener('session-expired', expire);
+    return () => window.removeEventListener('session-expired', expire);
   }, []);
   useEffect(() => {
     if (!user) return;
@@ -251,14 +279,14 @@ export default function App() {
   }, [user, load]);
 
   if (!ready) return null;
-  if (!user) return <Auth onAuth={setUser} />;
+  if (!user) return <Auth onAuth={setUser} initialNotice={verificationNotice} />;
 
   return (
     <div className="shell">
       <header className="top">
         <strong className="brand">Price Tracker</strong>
         <span className="muted small">Alerts go to {user.email}</span>
-        <button className="link" onClick={() => { localStorage.removeItem('token'); setUser(null); setItems([]); }}>Sign out</button>
+        <button className="link" onClick={async () => { try { await api.logout(); } finally { setUser(null); setItems([]); } }}>Sign out</button>
       </header>
       <div className="grid">
         <AddForm onAdded={load} />

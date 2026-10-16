@@ -2,35 +2,90 @@ const router = require('express').Router();
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
+const rateLimit = require('../middleware/rateLimit');
+const { sendVerificationEmail } = require('../services/mailer');
 
-const sign = (u) => jwt.sign({ id: u._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-const out = (u) => ({ id: u._id, name: u.name, email: u.email });
+const sign = (u) => jwt.sign({ id: u._id, purpose: 'session' }, process.env.JWT_SECRET, { expiresIn: '7d' });
+const signVerification = (u) => jwt.sign({ id: u._id, purpose: 'verify-email' }, process.env.JWT_SECRET, { expiresIn: '24h' });
+const out = (u) => ({ id: u._id, name: u.name, email: u.email, emailVerified: u.emailVerified });
+const cookieOptions = () => `Path=/; HttpOnly; SameSite=Strict; Max-Age=${7 * 24 * 60 * 60}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`;
+const setSession = (res, user) => res.set('Set-Cookie', `pt_session=${sign(user)}; ${cookieOptions()}`);
+const authLimit = rateLimit({ name: 'auth', limit: 10, windowMs: 15 * 60 * 1000 });
+const verifyLimit = rateLimit({ name: 'email-verify', limit: 20, windowMs: 15 * 60 * 1000 });
+const resendLimit = rateLimit({ name: 'email-resend', limit: 5, windowMs: 60 * 60 * 1000 });
+const sendVerification = (user) => {
+  const origin = process.env.CLIENT_URL || 'http://localhost:5173';
+  const link = `${origin}/#verify=${encodeURIComponent(signVerification(user))}`;
+  return sendVerificationEmail({ user, link });
+};
 
-router.post('/register', async (req, res, next) => {
+router.post('/register', authLimit, async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
-    if (!name || !email || !password || password.length < 6)
-      return res.status(400).json({ message: 'Name, email and a password of 6+ characters are required' });
-    if (await User.findOne({ email: email.toLowerCase() }))
+    const { name, email, password } = req.body || {};
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > 100 ||
+        typeof email !== 'string' || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+        typeof password !== 'string' || password.length < 12 || Buffer.byteLength(password, 'utf8') > 72)
+      return res.status(400).json({ message: 'Enter a valid name and email, and use a password of 12 to 72 UTF-8 bytes' });
+    if (await User.findOne({ email: email.trim().toLowerCase() }))
       return res.status(409).json({ message: 'This email is already registered' });
-    const user = await User.create({ name, email, password });
-    res.status(201).json({ token: sign(user), user: out(user) });
+    const user = await User.create({ name: name.trim(), email: email.trim(), password, emailVerified: false });
+    try { await sendVerification(user); }
+    catch (mailError) { console.error('Verification email failed:', mailError.message); }
+    res.status(201).json({ verificationRequired: true });
+  } catch (e) {
+    if (e.code === 11000) return res.status(409).json({ message: 'This email is already registered' });
+    next(e);
+  }
+});
+
+router.post('/login', authLimit, async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    const password = typeof body.password === 'string' && Buffer.byteLength(body.password, 'utf8') <= 72 ? body.password : '';
+    const user = await User.findOne({ email });
+    if (!user || !(await user.matches(password)))
+      return res.status(401).json({ message: 'Wrong email or password' });
+    if (!user.emailVerified) return res.status(403).json({ message: 'Verify your email before signing in. You can resend the verification link below.' });
+    setSession(res, user);
+    res.json({ user: out(user) });
   } catch (e) { next(e); }
 });
 
-router.post('/login', async (req, res, next) => {
+router.post('/resend-verification', resendLimit, async (req, res, next) => {
   try {
-    const user = await User.findOne({ email: (req.body.email || '').toLowerCase() });
-    if (!user || !(await user.matches(req.body.password || '')))
-      return res.status(401).json({ message: 'Wrong email or password' });
-    res.json({ token: sign(user), user: out(user) });
+    const email = typeof (req.body || {}).email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (email) {
+      const user = await User.findOne({ email, emailVerified: false });
+      if (user) {
+        try { await sendVerification(user); }
+        catch (mailError) { console.error('Verification email failed:', mailError.message); }
+      }
+    }
+    res.json({ ok: true, message: 'If that address has an unverified account, a verification link has been sent.' });
   } catch (e) { next(e); }
+});
+
+router.post('/verify-email', verifyLimit, async (req, res) => {
+  try {
+    const token = typeof (req.body || {}).token === 'string' ? req.body.token : '';
+    const claims = jwt.verify(token, process.env.JWT_SECRET);
+    if (claims.purpose !== 'verify-email') return res.status(400).json({ message: 'Invalid verification link' });
+    const user = await User.findByIdAndUpdate(claims.id, { $set: { emailVerified: true } }, { new: true });
+    if (!user) return res.status(400).json({ message: 'Verification account was not found' });
+    res.json({ ok: true, message: 'Email verified. You can now sign in.' });
+  } catch { res.status(400).json({ message: 'Verification link is invalid or expired. Request a new one and try again.' }); }
 });
 
 router.get('/me', auth, async (req, res) => {
   const user = await User.findById(req.userId);
   if (!user) return res.status(401).json({ message: 'User not found' });
   res.json({ user: out(user) });
+});
+
+router.post('/logout', (req, res) => {
+  res.set('Set-Cookie', `pt_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+  res.json({ ok: true });
 });
 
 module.exports = router;
