@@ -98,6 +98,7 @@ mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 10000 })
     const criticalModels = [
       require('./models/User'), require('./models/Product'), require('./models/FreeTrialClaim'),
       require('./models/CreditTransaction'), require('./models/StripeEvent'),
+      require('./models/CreditAlert'),
     ];
     await Promise.all(criticalModels.map((model) => model.init()));
     console.log('Account and credit indexes ready');

@@ -25,7 +25,7 @@ New accounts must verify their email address before signing in. Provide a workin
 
 Use a dedicated database user with only the required database permissions, restrict network access to the application, enable encrypted connections where supported, and configure tested backups and retention. Use a MongoDB replica set or Atlas cluster: purchase fulfillment and hit charging use MongoDB transactions so a payment or check cannot update the balance without its audit record. Ensure Mongoose indexes are created before opening traffic. Indexes support unique user emails, unique product URLs per user, idempotent Stripe events and checkout sessions, due-check lookups, and expiry of rate-limit buckets.
 
-Rate limits and scheduled work coordination are stored in MongoDB, so they work across application instances. Scheduler locks expire if a worker stops unexpectedly. Price-drop emails are queued on product documents and retried with backoff; delivery is at least once and may duplicate if the mail provider accepts a message just before a worker stops.
+Rate limits and scheduled work coordination are stored in MongoDB, so they work across application instances. Scheduler locks expire if a worker stops unexpectedly. Price-drop emails are queued on product documents, and credit balance alert emails are queued in MongoDB; both retry with backoff. Delivery is at least once and may duplicate if the mail provider accepts a message just before a worker stops.
 
 ## 3. Build and run
 
@@ -55,6 +55,8 @@ The prices are implemented as requested: $1/100, $10/1,000, and $1,000/10,000. T
 
 New users receive 20 starter hits after verifying their email, limited to one verified claim per IPv4 `/24` or IPv6 `/64` network. The starter-claim record stores an HMAC of that network prefix rather than the raw IP address. Shared networks can therefore share one starter allowance, and people using different networks can still evade this check; add a CAPTCHA or phone verification provider if stronger signup abuse controls are needed. Existing accounts are not automatically granted the promotion.
 
+Credit warning emails are queued when a user's balance first falls below 10, then again when it reaches zero. Each warning sends once per balance cycle and retries after delivery errors. Recharging above zero rearms the empty warning; a balance restored to at least 10 rearms the low-balance warning. Pending warnings are cancelled when a recharge makes them outdated.
+
 ## 6. Release tracking
 
-The `v1.0.1` Git tag is the published baseline. Version `1.0.2` adds the protections in [CHANGELOG.md](CHANGELOG.md); version `1.0.3` adds Stripe credit packs, server-side hit accounting, and the admin console; version `1.0.4` adds one-time starter credits with network-based duplicate-claim controls. Users upgrading from 1.0.1 should sign in again because sessions now use HttpOnly cookies instead of browser local storage.
+The `v1.0.1` Git tag is the published baseline. Version `1.0.2` adds the protections in [CHANGELOG.md](CHANGELOG.md); version `1.0.3` adds Stripe credit packs, server-side hit accounting, and the admin console; version `1.0.4` adds one-time starter credits with network-based duplicate-claim controls; version `1.0.5` adds low and empty balance email alerts. Users upgrading from 1.0.1 should sign in again because sessions now use HttpOnly cookies instead of browser local storage.

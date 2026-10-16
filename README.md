@@ -1,6 +1,6 @@
 # Price Tracker
 
-**Current version: 1.0.4.** Release history is in [docs/CHANGELOG.md](docs/CHANGELOG.md).
+**Current version: 1.0.5.** Release history is in [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 Add product URLs, choose how often to check them, and receive an email when a price drops below its previous recorded price. New accounts verify their email before they can sign in.
 

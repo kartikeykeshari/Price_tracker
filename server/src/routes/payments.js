@@ -7,6 +7,7 @@ const StripeEvent = require('../models/StripeEvent');
 const plans = require('../services/plans');
 const auth = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
+const { resetCreditAlertState } = require('../services/creditAlertState');
 
 const stripeKey = () => {
   if (!process.env.STRIPE_SECRET_KEY) throw Object.assign(new Error('Payments are not configured yet'), { status: 503 });
@@ -89,8 +90,11 @@ router.post('/webhook', require('express').raw({ type: 'application/json', limit
       await StripeEvent.create([{ eventId: event.id }], { session });
       const alreadyCredited = await CreditTransaction.exists({ stripeSessionId: checkout.id }).session(session);
       if (alreadyCredited) return;
+      const before = await User.findById(userId).session(session);
+      if (!before) throw new Error('Paid checkout user is unavailable');
       const user = await User.findOneAndUpdate({ _id: userId }, { $inc: { hitsBalance: plan.hits } }, { new: true, session });
       if (!user) throw new Error('Paid checkout user is unavailable');
+      await resetCreditAlertState(user, before.hitsBalance || 0, session);
       await CreditTransaction.create([{
         user: user._id, kind: 'purchase', hits: plan.hits, balanceAfter: user.hitsBalance,
         planId: plan.id, stripeSessionId: checkout.id,

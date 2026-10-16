@@ -5,6 +5,7 @@ const User = require('../models/User');
 const CreditTransaction = require('../models/CreditTransaction');
 const plans = require('../services/plans');
 const rateLimit = require('../middleware/rateLimit');
+const { resetCreditAlertState } = require('../services/creditAlertState');
 
 router.use(auth, (req, res, next) => {
   const allowed = (process.env.ADMIN_EMAILS || '').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
@@ -46,8 +47,11 @@ router.post('/users/:id/grant', adminLimit, async (req, res, next) => {
     const plan = plans[(req.body || {}).planId];
     if (!plan) return res.status(400).json({ message: 'Choose a valid hit pack' });
     await transaction.withTransaction(async () => {
+      const before = await User.findById(req.params.id).session(transaction);
+      if (!before) throw Object.assign(new Error('User not found'), { status: 404 });
       const user = await User.findByIdAndUpdate(req.params.id, { $inc: { hitsBalance: plan.hits } }, { new: true, session: transaction });
       if (!user) throw Object.assign(new Error('User not found'), { status: 404 });
+      await resetCreditAlertState(user, before.hitsBalance || 0, transaction);
       await CreditTransaction.create([{
         user: user._id, kind: 'admin_grant', hits: plan.hits, balanceAfter: user.hitsBalance,
         planId: plan.id, admin: req.user._id, reason: 'Admin membership grant',

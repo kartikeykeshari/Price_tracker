@@ -10,6 +10,8 @@ const userSchema = new mongoose.Schema({
   disabled: { type: Boolean, default: false },
   hitsBalance: { type: Number, min: 0, default: 0 },
   hitsUsed: { type: Number, min: 0, default: 0 },
+  lowCreditsAlertSent: { type: Boolean, default: false },
+  emptyCreditsAlertSent: { type: Boolean, default: false },
   signupFingerprint: { type: String, select: false },
 }, { timestamps: true });
 

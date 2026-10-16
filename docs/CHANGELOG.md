@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.5 — Credit balance email alerts
+
+- Queue a low-balance email when an account first drops below 10 checks, and an empty-balance email when it reaches zero.
+- Send each warning once per balance cycle, and rearm alerts as the user adds credits.
+- Persist alert jobs in MongoDB in the same transaction as hit consumption, cancel outdated warnings after a refill, and retry delivery failures with backoff.
+
 ## 1.0.4 — One-time starter credits
 
 - Grant 20 free price checks after a new account verifies its email address.

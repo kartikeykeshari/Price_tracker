@@ -4,6 +4,7 @@ const User = require('../models/User');
 const { scrape } = require('./scraper');
 const { sendPriceDrop } = require('./mailer');
 const CreditTransaction = require('../models/CreditTransaction');
+const CreditAlert = require('../models/CreditAlert');
 
 const PERIOD_MS = { day: 864e5, week: 7 * 864e5, month: 30 * 864e5 };
 const MIN_INTERVAL_MS = 5 * 60 * 1000; // never hit a site more often than every 5 minutes
@@ -39,6 +40,23 @@ async function checkProduct(product, { force = false } = {}) {
         if (!account || account.disabled) throw Object.assign(new Error('This account is unavailable. Contact support if you need help.'), { status: 403, noAccess: true });
         throw Object.assign(new Error('You are out of price check credits. Buy a hit pack to continue tracking.'), { status: 402, noCredits: true });
       }
+      const alerts = [];
+      const changes = {};
+      if (user.hitsBalance > 0 && user.hitsBalance < 10 && !user.lowCreditsAlertSent) {
+        changes.lowCreditsAlertSent = true;
+        alerts.push({ user: user._id, kind: 'low', balance: user.hitsBalance });
+      }
+      if (user.hitsBalance === 0 && !user.emptyCreditsAlertSent) {
+        changes.emptyCreditsAlertSent = true;
+        alerts.push({ user: user._id, kind: 'empty', balance: 0 });
+        await CreditAlert.updateMany(
+          { user: user._id, kind: 'low', sentAt: null },
+          { $set: { sentAt: new Date(), lockUntil: null, lastError: 'Superseded by empty balance notice' } },
+          { session: billingSession },
+        );
+      }
+      if (Object.keys(changes).length) await User.updateOne({ _id: user._id }, { $set: changes }, { session: billingSession });
+      if (alerts.length) await CreditAlert.create(alerts, { session: billingSession });
       await CreditTransaction.create([{
         user: user._id, kind: 'usage', hits: -1, balanceAfter: user.hitsBalance, product: product._id,
         reason: 'Product price check',
@@ -85,6 +103,52 @@ async function checkProduct(product, { force = false } = {}) {
   return product;
 }
 
+async function deliverCreditAlerts(limit = 20) {
+  for (let i = 0; i < limit; i += 1) {
+    const now = new Date();
+    const alert = await CreditAlert.findOneAndUpdate({
+      sentAt: null,
+      nextAttemptAt: { $lte: now },
+      $or: [{ lockUntil: null }, { lockUntil: { $lte: now } }],
+    }, { $set: { lockUntil: new Date(now.getTime() + 90 * 1000) } }, { new: true, sort: { createdAt: 1 } });
+    if (!alert) return;
+    try {
+      const user = await User.findById(alert.user);
+      if (!user) {
+        alert.sentAt = new Date();
+      } else {
+        const stillPending = await CreditAlert.exists({ _id: alert._id, sentAt: null, lockUntil: alert.lockUntil });
+        if (!stillPending) continue;
+        if ((alert.kind === 'empty' && user.hitsBalance > 0) ||
+            (alert.kind === 'low' && (user.hitsBalance === 0 || user.hitsBalance >= 10))) {
+          alert.sentAt = new Date();
+          alert.lockUntil = null;
+          alert.lastError = 'Superseded by the current balance';
+          await alert.save();
+          continue;
+        }
+        if (alert.kind === 'low') alert.balance = user.hitsBalance;
+        const { sendCreditBalanceAlert } = require('./mailer');
+        await sendCreditBalanceAlert({ user, kind: alert.kind, balance: alert.balance });
+        alert.sentAt = new Date();
+      }
+      alert.lockUntil = null;
+      alert.lastError = '';
+      await alert.save();
+    } catch (error) {
+      const stillPending = await CreditAlert.exists({ _id: alert._id, sentAt: null, lockUntil: alert.lockUntil });
+      if (!stillPending) continue;
+      alert.attempts += 1;
+      const delay = Math.min(6 * 60 * 60 * 1000, 5 * 60 * 1000 * (2 ** Math.min(alert.attempts - 1, 7)));
+      alert.nextAttemptAt = new Date(Date.now() + delay);
+      alert.lockUntil = null;
+      alert.lastError = error.message.slice(0, 300);
+      await alert.save();
+      console.error('Credit alert email queued for retry:', error.message);
+    }
+  }
+}
+
 async function deliverPendingAlerts(productId) {
   const now = new Date();
   let product = await Product.findOneAndUpdate({
@@ -126,6 +190,7 @@ async function runDue() {
   if (running) return;
   running = true;
   try {
+    await deliverCreditAlerts();
     const now = new Date();
     const due = await Product.find({ active: true, nextCheckAt: { $lte: now } }).limit(50);
     const alerts = await Product.find({ pendingAlerts: { $elemMatch: { nextAttemptAt: { $lte: now } } } }).limit(50);
