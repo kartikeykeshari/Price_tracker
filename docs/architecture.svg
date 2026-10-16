@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 620" font-family="Segoe UI,Arial,sans-serif" font-size="13">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#0f4c47"/></marker></defs>
+<rect width="960" height="620" fill="#f4f7f6"/>
+<text x="480" y="30" text-anchor="middle" font-size="18" font-weight="700" fill="#10211f">Price Tracker – MERN Architecture</text>
+
+<rect x="30" y="60" width="250" height="260" rx="10" fill="#fff" stroke="#0f4c47" stroke-width="2"/>
+<text x="155" y="85" text-anchor="middle" font-weight="700" fill="#0f4c47">FRONTEND – React (Vite)</text>
+<g fill="#e3efed" stroke="#9db9b5"><rect x="50" y="100" width="210" height="34" rx="6"/><rect x="50" y="144" width="210" height="34" rx="6"/><rect x="50" y="188" width="210" height="34" rx="6"/><rect x="50" y="232" width="210" height="34" rx="6"/></g>
+<g text-anchor="middle" fill="#10211f"><text x="155" y="122">Login / Register</text><text x="155" y="166">Add multiple URLs + frequency</text><text x="155" y="210">Product list, price history</text><text x="155" y="254">Pause / Edit / Check now / Remove</text></g>
+<text x="155" y="296" text-anchor="middle" font-size="12" fill="#5b6f6c">api.js (fetch + JWT in header)</text>
+
+<rect x="340" y="60" width="290" height="260" rx="10" fill="#fff" stroke="#0f4c47" stroke-width="2"/>
+<text x="485" y="85" text-anchor="middle" font-weight="700" fill="#0f4c47">BACKEND – Node.js + Express</text>
+<g fill="#e3efed" stroke="#9db9b5"><rect x="360" y="100" width="250" height="34" rx="6"/><rect x="360" y="144" width="250" height="34" rx="6"/><rect x="360" y="188" width="250" height="34" rx="6"/><rect x="360" y="232" width="250" height="34" rx="6"/></g>
+<g text-anchor="middle" fill="#10211f"><text x="485" y="122">JWT auth middleware</text><text x="485" y="166">/api/auth  ·  /api/products</text><text x="485" y="210">Scheduler (node-cron, every minute)</text><text x="485" y="254">Scraper + Mailer services</text></g>
+<text x="485" y="296" text-anchor="middle" font-size="12" fill="#5b6f6c">picks products where nextCheckAt ≤ now</text>
+
+<rect x="690" y="60" width="240" height="130" rx="10" fill="#fff" stroke="#0f7a3d" stroke-width="2"/>
+<text x="810" y="85" text-anchor="middle" font-weight="700" fill="#0f7a3d">DATABASE – MongoDB</text>
+<text x="810" y="115" text-anchor="middle">users (name, email, hash)</text>
+<text x="810" y="140" text-anchor="middle">products (url, prices, history,</text>
+<text x="810" y="160" text-anchor="middle">frequency, nextCheckAt)</text>
+
+<rect x="690" y="215" width="240" height="105" rx="10" fill="#fff" stroke="#b45309" stroke-width="2"/>
+<text x="810" y="240" text-anchor="middle" font-weight="700" fill="#b45309">EXTERNAL</text>
+<text x="810" y="268" text-anchor="middle">Shopping websites (HTML)</text>
+<text x="810" y="292" text-anchor="middle">SMTP server (Gmail etc.)</text>
+
+<path d="M280 190H338" stroke="#0f4c47" stroke-width="2" marker-end="url(#a)"/>
+<path d="M338 215H282" stroke="#0f4c47" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a)"/>
+<text x="309" y="180" text-anchor="middle" font-size="11" fill="#5b6f6c">REST/JSON</text>
+<path d="M630 120H688" stroke="#0f7a3d" stroke-width="2" marker-end="url(#a)"/>
+<path d="M688 150H632" stroke="#0f7a3d" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a)"/>
+<path d="M630 250H688" stroke="#b45309" stroke-width="2" marker-end="url(#a)"/>
+<text x="659" y="240" text-anchor="middle" font-size="11" fill="#5b6f6c">HTTP / SMTP</text>
+
+<text x="480" y="352" text-anchor="middle" font-size="15" font-weight="700" fill="#10211f">Scheduled price check flow</text>
+<g fill="#fff" stroke="#0f4c47" stroke-width="1.5">
+<rect x="20" y="375" width="140" height="70" rx="8"/><rect x="190" y="375" width="140" height="70" rx="8"/><rect x="360" y="375" width="140" height="70" rx="8"/><rect x="530" y="375" width="140" height="70" rx="8"/><rect x="700" y="375" width="120" height="70" rx="8"/><rect x="835" y="375" width="105" height="70" rx="8" stroke="#0f7a3d"/></g>
+<g text-anchor="middle" fill="#10211f">
+<text x="90" y="403">1. Cron tick</text><text x="90" y="423" font-size="11">every minute</text>
+<text x="260" y="403">2. Find due items</text><text x="260" y="423" font-size="11">nextCheckAt ≤ now</text>
+<text x="430" y="403">3. Scrape page</text><text x="430" y="423" font-size="11">JSON-LD / meta / CSS</text>
+<text x="600" y="403">4. Compare</text><text x="600" y="423" font-size="11">new &lt; previous?</text>
+<text x="760" y="403">5. Save</text><text x="760" y="423" font-size="11">history + next time</text>
+<text x="887" y="403">6. Email</text><text x="887" y="423" font-size="11">only if lower</text></g>
+<g stroke="#0f4c47" stroke-width="2" marker-end="url(#a)"><path d="M160 410H188"/><path d="M330 410H358"/><path d="M500 410H528"/><path d="M670 410H698"/><path d="M820 410H833"/></g>
+
+<text x="480" y="490" text-anchor="middle" font-size="15" font-weight="700" fill="#10211f">Frequency rule</text>
+<text x="480" y="515" text-anchor="middle">interval = period length ÷ count   (day = 24 h, week = 7 d, month = 30 d)</text>
+<text x="480" y="538" text-anchor="middle">Example: 3 times per day → every 8 hours.  Minimum interval: 5 minutes.</text>
+<text x="480" y="575" text-anchor="middle" font-size="12" fill="#5b6f6c">Because nextCheckAt is stored in MongoDB, schedules survive server restarts.</text>
+</svg>
