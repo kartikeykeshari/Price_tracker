@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 620" font-family="Segoe UI,Arial,sans-serif" font-size="13">
 <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#0f4c47"/></marker></defs>
 <rect width="960" height="620" fill="#f4f7f6"/>
-<text x="480" y="30" text-anchor="middle" font-size="18" font-weight="700" fill="#10211f">Price Tracker – MERN Architecture</text>
+<text x="480" y="30" text-anchor="middle" font-size="18" font-weight="700" fill="#10211f">PricePulse – MERN Architecture</text>
 
 <rect x="30" y="60" width="250" height="260" rx="10" fill="#fff" stroke="#0f4c47" stroke-width="2"/>
 <text x="155" y="85" text-anchor="middle" font-weight="700" fill="#0f4c47">FRONTEND – React (Vite)</text>

@@ -13,9 +13,10 @@ Create `server/.env` from `server/.env.example` using the deployment's secret ma
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, and `SMTP_PASS`; production startup fails without these settings.
 - `PORT` if the host requires a specific listening port.
 - `TRUST_PROXY_HOPS` only when behind a known reverse proxy. Set it to the number of trusted proxy hops; leave it at `0` when users connect directly.
-- `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` from the correct Stripe environment (test or live). Keep both server-side. Register `https://your-domain/api/payments/webhook` in Stripe for `checkout.session.completed` and `checkout.session.async_payment_succeeded`.
+- `CASHFREE_ENV=production`, `CASHFREE_CLIENT_ID`, and `CASHFREE_CLIENT_SECRET` from the Cashfree production environment. Keep both credentials server-side. Register `https://your-domain/api/payments/webhook` in Cashfree for payment success events; webhook signatures are verified with the Cashfree client secret.
 - `ADMIN_EMAILS` as a comma-separated list of exact, verified account emails that should receive admin access. The server grants the admin role only to these configured addresses.
 - `FREE_TRIAL_SECRET` as a separate stable secret of at least 32 random bytes. It HMACs signup network prefixes for the one-time starter offer; do not rotate it casually, because old fingerprints will no longer match.
+- Optional `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` and `MICROSOFT_CLIENT_ID`/`MICROSOFT_CLIENT_SECRET` for social sign-in. Register `https://your-domain/api/auth/google/callback` and `https://your-domain/api/auth/microsoft/callback` as redirect URIs with the providers. The Microsoft app registration must allow the account types you want to support.
 
 Never use `*` for the browser origin. The API sets an HttpOnly, Secure, SameSite session cookie in production, checks browser request origins, and only accepts the configured client origin.
 
@@ -23,7 +24,7 @@ New accounts must verify their email address before signing in. Provide a workin
 
 ## 2. Prepare MongoDB
 
-Use a dedicated database user with only the required database permissions, restrict network access to the application, enable encrypted connections where supported, and configure tested backups and retention. Use a MongoDB replica set or Atlas cluster: purchase fulfillment and hit charging use MongoDB transactions so a payment or check cannot update the balance without its audit record. Ensure Mongoose indexes are created before opening traffic. Indexes support unique user emails, unique product URLs per user, idempotent Stripe events and checkout sessions, due-check lookups, and expiry of rate-limit buckets.
+Use a dedicated database user with only the required database permissions, restrict network access to the application, enable encrypted connections where supported, and configure tested backups and retention. Use a MongoDB replica set or Atlas cluster: purchase fulfillment and hit charging use MongoDB transactions so a payment or check cannot update the balance without its audit record. Ensure Mongoose indexes are created before opening traffic. Indexes support unique user emails, unique product URLs per user, idempotent Cashfree events and payments, due-check lookups, and expiry of rate-limit buckets.
 
 Rate limits and scheduled work coordination are stored in MongoDB, so they work across application instances. Scheduler locks expire if a worker stops unexpectedly. Price-drop emails are queued on product documents, and credit balance alert emails are queued in MongoDB; both retry with backoff. Delivery is at least once and may duplicate if the mail provider accepts a message just before a worker stops.
 
@@ -37,6 +38,8 @@ npm run start --prefix server
 
 Serve `client/dist` and proxy `/api` to the Node server over HTTPS. Configure the web server with a restrictive Content Security Policy for the static client, HTTPS redirects, TLS renewal, request logging, and suitable connection limits. The Express API sends security headers and limits JSON request bodies to 20 KB.
 
+Set the client build variable `VITE_SITE_URL` to the canonical HTTPS origin (for example, `https://pricepulse.example`) before running the client build. The build emits the canonical homepage URL plus `robots.txt` and a one-page `sitemap.xml`. Check that both files are publicly reachable after deployment, then verify the site in Google Search Console and Bing Webmaster Tools and submit `/sitemap.xml`.
+
 Run the API under a process supervisor or container orchestrator that restarts failed processes, forwards `SIGTERM`, and exposes `/api/health` for readiness checks. The health endpoint returns an error when MongoDB is disconnected. Monitor API errors, MongoDB capacity, scheduler lag, queued email alerts, and SMTP delivery.
 
 ## 4. Network and scraping controls
@@ -47,9 +50,9 @@ Scraping is best-effort. Target sites may block automated requests, change page 
 
 ## 5. Payments and memberships
 
-The server owns the three USD one-time credit packs and their amounts. Checkout creates a Stripe-hosted payment session from that fixed catalog; it does not accept a client-supplied price or hit count. Credits are granted only after the signed Stripe webhook reports a paid session whose user, plan, currency, and amount match the server catalog. Webhook events and Checkout Session IDs are persisted with unique indexes, and the credit ledger is updated in the same MongoDB transaction as the balance. The success redirect is informational and never grants credits.
+The server owns the three USD one-time credit packs and their amounts. Checkout creates a Cashfree order from that fixed catalog; it does not accept a client-supplied price or hit count. Credits are granted only after a signed Cashfree payment success webhook whose user, plan, currency, order amount, and payment amount match the server catalog. Webhook events and payment IDs are persisted with unique indexes, and the credit ledger is updated in the same MongoDB transaction as the balance. The success redirect is informational and never grants credits. Cashfree must enable international/USD payments for this catalog; confirm support with the merchant account before enabling production checkout.
 
-Each product scrape attempt consumes one hit immediately before the outbound request, including attempts where the target site fails or the page cannot be parsed. Products pause when an account runs out of credits. Admin grants and account disable actions require an admin account from `ADMIN_EMAILS`; each grant is recorded in the credit ledger. Configure Stripe refunds and chargebacks for operational review: this release does not automatically claw back already-used hits.
+Each product scrape attempt consumes one hit immediately before the outbound request, including attempts where the target site fails or the page cannot be parsed. Products pause when an account runs out of credits. Admin grants and account disable actions require an admin account from `ADMIN_EMAILS`; each grant is recorded in the credit ledger. Configure Cashfree refunds and chargebacks for operational review: this release does not automatically claw back already-used hits.
 
 The prices are implemented as requested: $1/100, $10/1,000, and $1,000/10,000. That makes the 10,000-hit pack ten times more expensive per hit than the other two packs; confirm this pricing before enabling live payments.
 

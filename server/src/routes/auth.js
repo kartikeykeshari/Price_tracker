@@ -8,12 +8,13 @@ const auth = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
 const { signupFingerprint } = require('../services/freeTrialIdentity');
 const { sendVerificationEmail } = require('../services/mailer');
+const oauth = require('../services/oauth');
 
 const sign = (u) => jwt.sign({ id: u._id, purpose: 'session' }, process.env.JWT_SECRET, { expiresIn: '7d' });
 const signVerification = (u) => jwt.sign({ id: u._id, purpose: 'verify-email' }, process.env.JWT_SECRET, { expiresIn: '24h' });
 const out = (u) => ({ id: u._id, name: u.name, email: u.email, emailVerified: u.emailVerified, role: u.role, hitsBalance: u.hitsBalance, hitsUsed: u.hitsUsed });
 const cookieOptions = () => `Path=/; HttpOnly; SameSite=Strict; Max-Age=${7 * 24 * 60 * 60}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`;
-const setSession = (res, user) => res.set('Set-Cookie', `pt_session=${sign(user)}; ${cookieOptions()}`);
+const setSession = (res, user) => res.append('Set-Cookie', `pt_session=${sign(user)}; ${cookieOptions()}`);
 const authLimit = rateLimit({ name: 'auth', limit: 10, windowMs: 15 * 60 * 1000 });
 const verifyLimit = rateLimit({ name: 'email-verify', limit: 20, windowMs: 15 * 60 * 1000 });
 const resendLimit = rateLimit({ name: 'email-resend', limit: 5, windowMs: 60 * 60 * 1000 });
@@ -23,6 +24,107 @@ const sendVerification = (user) => {
   const link = `${origin}/#verify=${encodeURIComponent(signVerification(user))}`;
   return sendVerificationEmail({ user, link });
 };
+const oauthCookie = (provider) => `pt_oauth_${provider}`;
+const getCookie = (req, name) => (req.headers.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
+const clearOAuthCookie = (res, provider) => res.append('Set-Cookie', `${oauthCookie(provider)}=; Path=/api/auth; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+const oauthRedirect = (status) => `${process.env.CLIENT_URL || 'http://localhost:5173'}/?oauth=${status}`;
+
+router.get('/providers', (_, res) => res.json({
+  google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+  microsoft: !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET),
+}));
+
+for (const provider of ['google', 'microsoft']) {
+  router.get(`/${provider}`, authLimit, async (req, res) => {
+    try {
+      if (!(process.env[`${provider.toUpperCase()}_CLIENT_ID`] && process.env[`${provider.toUpperCase()}_CLIENT_SECRET`]))
+        return res.redirect(oauthRedirect(`${provider}_unavailable`));
+      const state = require('crypto').randomBytes(32).toString('base64url');
+      const nonce = require('crypto').randomBytes(32).toString('base64url');
+      const verifier = require('crypto').randomBytes(48).toString('base64url');
+      const token = jwt.sign({ purpose: 'oauth-state', provider, state, nonce, verifier }, process.env.JWT_SECRET, { expiresIn: '10m' });
+      res.append('Set-Cookie', `${oauthCookie(provider)}=${token}; Path=/api/auth; HttpOnly; SameSite=Lax; Max-Age=600${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+      res.redirect(await oauth.begin(provider, state, nonce, verifier));
+    } catch (error) {
+      console.error(`${provider} sign-in could not start:`, error.message);
+      res.redirect(oauthRedirect('error'));
+    }
+  });
+
+  router.get(`/${provider}/callback`, authLimit, async (req, res) => {
+    clearOAuthCookie(res, provider);
+    try {
+      const stateCookie = getCookie(req, oauthCookie(provider));
+      const flow = stateCookie && jwt.verify(stateCookie, process.env.JWT_SECRET);
+      if (!flow || flow.purpose !== 'oauth-state' || flow.provider !== provider || !req.query.state || req.query.state !== flow.state || !req.query.code)
+        throw new Error('Sign-in request expired or could not be validated');
+      const claims = await oauth.finish(provider, String(req.query.code), flow.verifier, flow.nonce);
+      const email = String(claims.email || claims.preferred_username || '').trim().toLowerCase();
+      if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+        throw new Error('This account did not provide a usable email address');
+
+      const field = provider === 'google' ? 'googleSub' : 'microsoftSub';
+      const admins = (process.env.ADMIN_EMAILS || '').split(',').map((value) => value.trim().toLowerCase());
+      const session = await mongoose.startSession();
+      let user;
+      let needsVerification = false;
+      try {
+        await session.withTransaction(async () => {
+          user = await User.findOne({ [field]: claims.sub }).select('+signupFingerprint').session(session);
+          if (!user) {
+            user = await User.findOne({ email }).select('+signupFingerprint').session(session);
+            if (user && claims.email_verified !== true) throw Object.assign(new Error('Verify this email address with your existing sign-in method before linking accounts'), { status: 409 });
+          }
+          if (!user) {
+            user = new User({
+              name: String(claims.name || email.split('@')[0]).slice(0, 100), email,
+              emailVerified: false, role: admins.includes(email) ? 'admin' : 'user',
+              signupFingerprint: signupFingerprint(req.ip || req.socket.remoteAddress),
+            });
+          }
+          if (user.disabled) throw Object.assign(new Error('This account is unavailable. Contact support if you think this is a mistake.'), { status: 403 });
+          if (user[field] && user[field] !== claims.sub) throw Object.assign(new Error('This email is already linked to another sign-in account'), { status: 409 });
+
+          const wasVerified = user.emailVerified;
+          user[field] = claims.sub;
+          if (claims.email_verified === true) user.emailVerified = true;
+          needsVerification = !user.emailVerified;
+          if (!wasVerified && user.emailVerified) {
+            user.signupFingerprint = user.signupFingerprint || signupFingerprint(req.ip || req.socket.remoteAddress);
+            const fingerprint = user.signupFingerprint;
+            if (await FreeTrialClaim.exists({ fingerprint }).session(session)) {
+              user.signupFingerprint = undefined;
+              await user.save({ session });
+            } else {
+              user.hitsBalance = (user.hitsBalance || 0) + FREE_TRIAL_HITS;
+              user.signupFingerprint = undefined;
+              await user.save({ session });
+              await FreeTrialClaim.create([{ fingerprint, user: user._id, hits: FREE_TRIAL_HITS }], { session });
+              await CreditTransaction.create([{
+                user: user._id, kind: 'free_trial', hits: FREE_TRIAL_HITS,
+                balanceAfter: user.hitsBalance, reason: 'Welcome starter credits',
+              }], { session });
+            }
+          } else {
+            await user.save({ session });
+          }
+        });
+      } finally { await session.endSession(); }
+
+      if (needsVerification) {
+        try { await sendVerification(user); }
+        catch (mailError) { console.error('OAuth verification email failed:', mailError.message); }
+        return res.redirect(oauthRedirect('verify'));
+      }
+      setSession(res, user);
+      res.redirect(oauthRedirect('success'));
+    } catch (error) {
+      console.warn(`${provider} sign-in failed:`, error.message);
+      const status = error.status === 403 ? 'disabled' : 'error';
+      res.redirect(oauthRedirect(status));
+    }
+  });
+}
 
 router.post('/register', authLimit, async (req, res, next) => {
   try {

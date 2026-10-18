@@ -5,7 +5,9 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   emailVerified: { type: Boolean, default: true },
-  password: { type: String, required: true, minlength: 12, maxlength: 72 },
+  password: { type: String, required: false, minlength: 12, maxlength: 72 },
+  googleSub: { type: String, default: undefined },
+  microsoftSub: { type: String, default: undefined },
   role: { type: String, enum: ['user', 'admin'], default: 'user' },
   disabled: { type: Boolean, default: false },
   hitsBalance: { type: Number, min: 0, default: 0 },
@@ -16,9 +18,11 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 userSchema.pre('save', async function (next) {
-  if (this.isModified('password')) this.password = await bcrypt.hash(this.password, 12);
+  if (this.isModified('password') && this.password) this.password = await bcrypt.hash(this.password, 12);
   next();
 });
-userSchema.methods.matches = function (plain) { return bcrypt.compare(plain, this.password); };
+userSchema.index({ googleSub: 1 }, { unique: true, sparse: true });
+userSchema.index({ microsoftSub: 1 }, { unique: true, sparse: true });
+userSchema.methods.matches = function (plain) { return this.password ? bcrypt.compare(plain, this.password) : false; };
 
 module.exports = mongoose.model('User', userSchema);

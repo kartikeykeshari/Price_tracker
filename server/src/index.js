@@ -9,6 +9,10 @@ function validateConfig() {
   const missing = ['MONGO_URI', 'JWT_SECRET'].filter((key) => !process.env[key]);
   if (missing.length) throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
   if (Buffer.byteLength(process.env.JWT_SECRET, 'utf8') < 32) throw new Error('JWT_SECRET must be at least 32 bytes');
+  for (const provider of ['GOOGLE', 'MICROSOFT']) {
+    if (!!process.env[`${provider}_CLIENT_ID`] !== !!process.env[`${provider}_CLIENT_SECRET`])
+      throw new Error(`${provider}_CLIENT_ID and ${provider}_CLIENT_SECRET must be configured together`);
+  }
   if (process.env.NODE_ENV === 'production') {
     if (!process.env.CLIENT_URL) throw new Error('CLIENT_URL must be set in production');
     let origin;
@@ -17,8 +21,10 @@ function validateConfig() {
       throw new Error('CLIENT_URL must be a valid HTTPS origin without a path');
     if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS)
       throw new Error('SMTP_HOST, SMTP_USER and SMTP_PASS are required in production');
-    if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET || !process.env.ADMIN_EMAILS)
-      throw new Error('STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and ADMIN_EMAILS are required in production');
+    if (!process.env.CASHFREE_CLIENT_ID || !process.env.CASHFREE_CLIENT_SECRET || !process.env.ADMIN_EMAILS)
+      throw new Error('CASHFREE_CLIENT_ID, CASHFREE_CLIENT_SECRET and ADMIN_EMAILS are required in production');
+    if (!['sandbox', 'production'].includes(process.env.CASHFREE_ENV))
+      throw new Error('CASHFREE_ENV must be sandbox or production');
     if (!process.env.FREE_TRIAL_SECRET || Buffer.byteLength(process.env.FREE_TRIAL_SECRET, 'utf8') < 32)
       throw new Error('FREE_TRIAL_SECRET must be at least 32 bytes in production');
   }
@@ -42,7 +48,7 @@ app.use((req, res, next) => {
 });
 app.use((req, res, next) => {
   res.set({
-    'Content-Security-Policy': "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
+    'Content-Security-Policy': "default-src 'self'; script-src 'self' https://sdk.cashfree.com; connect-src 'self' https://api.cashfree.com https://sandbox.cashfree.com; frame-src 'self' https://*.cashfree.com https://*.cashfree.net; base-uri 'self'; form-action 'self' https://*.cashfree.com https://*.cashfree.net; frame-ancestors 'none'; object-src 'none'",
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'no-referrer',
@@ -97,7 +103,7 @@ mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 10000 })
     console.log('MongoDB connected');
     const criticalModels = [
       require('./models/User'), require('./models/Product'), require('./models/FreeTrialClaim'),
-      require('./models/CreditTransaction'), require('./models/StripeEvent'),
+      require('./models/CreditTransaction'), require('./models/CashfreeEvent'),
       require('./models/CreditAlert'),
     ];
     await Promise.all(criticalModels.map((model) => model.init()));

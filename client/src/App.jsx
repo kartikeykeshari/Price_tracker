@@ -102,7 +102,10 @@ function Auth({ onAuth, initialNotice }) {
   const [err, setErr] = useState('');
   const [notice, setNotice] = useState(initialNotice || null);
   const [busy, setBusy] = useState(false);
+  const [providers, setProviders] = useState({ google: false, microsoft: false });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  useEffect(() => { api.authProviders().then(setProviders).catch(() => {}); }, []);
 
   const submit = async (e) => {
     e.preventDefault(); setErr(''); setBusy(true);
@@ -123,8 +126,32 @@ function Auth({ onAuth, initialNotice }) {
   return (
     <main className="auth">
       <section className="auth-side">
-        <h1>Buy when it's cheaper.</h1>
-        <p>Add the products you want. We check the price on your schedule and email you the moment it drops below the last one.</p>
+        <div className="auth-marketing">
+          <p className="eyebrow">PRICE TRACKER · PRICE DROP ALERTS</p>
+          <h1>Track product prices. Know when they drop.</h1>
+          <p className="auth-lead">PricePulse watches product pages on a schedule, records price history, and emails you when a tracked price falls below its previous check.</p>
+          <ul className="marketing-points">
+            <li>Track product URLs from supported online stores</li>
+            <li>Choose how often PricePulse checks each product</li>
+            <li>See price history and get email alerts for drops</li>
+          </ul>
+          <button type="button" className="marketing-cta" onClick={() => setMode('register')}>Create an account — eligible users get 20 free checks</button>
+          <section className="marketing-details" aria-labelledby="how-it-works">
+            <h2 id="how-it-works">How PricePulse works</h2>
+            <ol>
+              <li>Add a product page URL.</li>
+              <li>Choose a price check schedule.</li>
+              <li>Get an email when the price is lower than the previous recorded price.</li>
+            </ol>
+          </section>
+          <section className="marketing-faq" aria-labelledby="pricepulse-faq">
+            <h2 id="pricepulse-faq">Price tracker questions</h2>
+            <details><summary>Can I track any online store?</summary><p>PricePulse works with many publicly accessible product pages. Some stores block automated requests or render prices in a way the tracker cannot read.</p></details>
+            <details><summary>When will I get a price drop alert?</summary><p>PricePulse emails you after a successful check finds a price below the previous recorded price.</p></details>
+            <details><summary>Do price checks run continuously?</summary><p>Checks follow the schedule you choose, subject to a five-minute minimum interval.</p></details>
+            <details><summary>How do the free checks work?</summary><p>Eligible new accounts receive 20 starter checks after email verification. The offer is limited to one claim per network.</p></details>
+          </section>
+        </div>
       </section>
       <form className="auth-card" onSubmit={submit}>
         <h2>{mode === 'login' ? 'Sign in' : 'Create your account'}</h2>
@@ -140,6 +167,13 @@ function Auth({ onAuth, initialNotice }) {
           catch (x) { setNotice({ ok: false, text: x.message }); }
         }}>Resend verification email</button>}
         <button className="btn" disabled={busy}>{busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}</button>
+        {mode === 'login' && (providers.google || providers.microsoft) && <>
+          <div className="oauth-divider"><span>or continue with</span></div>
+          <div className="oauth-buttons">
+            {providers.google && <a className="oauth-button" href="/api/auth/google">Continue with Google</a>}
+            {providers.microsoft && <a className="oauth-button" href="/api/auth/microsoft">Continue with Microsoft</a>}
+          </div>
+        </>}
         <button type="button" className="link" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setErr(''); }}>
           {mode === 'login' ? 'New here? Create an account' : 'Have an account? Sign in'}
         </button>
@@ -252,14 +286,15 @@ function Membership({ user, refresh }) {
   const [plans, setPlans] = useState([]);
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
+  const [phone, setPhone] = useState('');
   useEffect(() => { api.plans().then((r) => setPlans(r.plans)).catch((e) => setMessage(e.message)); }, []);
   const buy = async (plan) => {
     setBusy(plan.id); setMessage('');
     try {
-      const { url } = await api.checkout(plan.id);
-      const target = new URL(url);
-      if (target.protocol !== 'https:' || target.hostname !== 'checkout.stripe.com') throw new Error('Secure payment page could not be opened. Please try again.');
-      window.location.assign(target.href);
+      const { paymentSessionId, mode } = await api.checkout(plan.id, phone);
+      if (!window.Cashfree || !paymentSessionId) throw new Error('Secure payment page could not be opened. Please try again.');
+      const cashfree = window.Cashfree({ mode });
+      await cashfree.checkout({ paymentSessionId, redirectTarget: '_self' });
     } catch (e) { setMessage(e.message); setBusy(''); }
   };
   return <section className="panel membership">
@@ -270,6 +305,7 @@ function Membership({ user, refresh }) {
       <strong>${p.price.toLocaleString('en-US')}</strong>
       <button className="chip solid" disabled={!!busy} onClick={() => buy(p)}>{busy === p.id ? 'Opening…' : 'Buy pack'}</button>
     </article>)}</div>
+    <label className="small">Phone number for payment<input inputMode="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="10 to 15 digits" /></label>
     <p className="muted small membership-note">One check is charged each time we start checking a product. Credits are one-time purchases and do not expire.</p>
     {message && <p className="error small" role="alert">{message}</p>}
   </section>;
@@ -329,9 +365,21 @@ export default function App() {
     }
   }, []);
   useEffect(() => {
-    const checkout = new URLSearchParams(window.location.search).get('checkout');
-    if (!checkout) return;
-    setCheckoutNotice(checkout === 'success' ? 'Payment submitted. Credits appear after Stripe confirms the payment.' : 'Payment was cancelled. No credits were charged.');
+    const params = new URLSearchParams(window.location.search);
+    const checkout = params.get('checkout');
+    const oauth = params.get('oauth');
+    if (checkout) setCheckoutNotice(checkout === 'return' ? 'Payment submitted. Credits appear after Cashfree confirms the payment.' : 'Payment was cancelled. No credits were charged.');
+    if (oauth) {
+      const messages = {
+        verify: { ok: true, text: 'Check your email for a verification link to finish signing in.' },
+        disabled: { ok: false, text: 'This account is unavailable. Contact support if you think this is a mistake.' },
+        error: { ok: false, text: 'Could not sign in with that account. Try again or use email and password.' },
+        google_unavailable: { ok: false, text: 'Google sign-in is not configured yet.' },
+        microsoft_unavailable: { ok: false, text: 'Microsoft sign-in is not configured yet.' },
+      };
+      setVerificationNotice(messages[oauth] || null);
+    }
+    if (!checkout && !oauth) return;
     window.history.replaceState({}, '', window.location.pathname + window.location.hash);
   }, []);
   useEffect(() => {
@@ -353,7 +401,7 @@ export default function App() {
   return (
     <div className="shell">
       <header className="top">
-        <strong className="brand">Price Tracker</strong>
+        <strong className="brand">PricePulse</strong>
         <span className="muted small">Alerts go to {user.email}</span>
         <span className="muted small">{user.hitsBalance || 0} checks available</span>
         <button className="link" onClick={async () => { try { await api.logout(); } finally { setUser(null); setItems([]); } }}>Sign out</button>
