@@ -2,6 +2,7 @@ const call = async (path, method = 'GET', body) => {
   const res = await fetch(`/api${path}`, {
     method,
     credentials: 'include',
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });

@@ -58,6 +58,10 @@ app.use((req, res, next) => {
   next();
 });
 app.use((req, res, next) => req.path === '/api/payments/webhook' ? next() : express.json({ limit: '20kb' })(req, res, next));
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, private');
+  next();
+});
 app.use('/api/payments', require('./routes/payments'));
 const apiLimit = rateLimit({ name: 'api', limit: 300, windowMs: 15 * 60 * 1000 });
 app.use('/api', (req, res, next) => req.path === '/health' ? next() : apiLimit(req, res, next));
@@ -107,6 +111,25 @@ mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 10000 })
       require('./models/CreditAlert'),
     ];
     await Promise.all(criticalModels.map((model) => model.init()));
+    const User = require('./models/User');
+    const legacyUserDefaults = await User.collection.updateMany(
+      { $or: [
+        { emailVerified: { $exists: false } }, { role: { $exists: false } },
+        { disabled: { $exists: false } }, { hitsBalance: { $exists: false } },
+        { hitsUsed: { $exists: false } }, { lowCreditsAlertSent: { $exists: false } },
+        { emptyCreditsAlertSent: { $exists: false } },
+      ] },
+      [{ $set: {
+        emailVerified: { $ifNull: ['$emailVerified', true] },
+        role: { $ifNull: ['$role', 'user'] },
+        disabled: { $ifNull: ['$disabled', false] },
+        hitsBalance: { $ifNull: ['$hitsBalance', 0] },
+        hitsUsed: { $ifNull: ['$hitsUsed', 0] },
+        lowCreditsAlertSent: { $ifNull: ['$lowCreditsAlertSent', false] },
+        emptyCreditsAlertSent: { $ifNull: ['$emptyCreditsAlertSent', false] },
+      } }],
+    );
+    if (legacyUserDefaults.modifiedCount) console.log(`Updated defaults for ${legacyUserDefaults.modifiedCount} legacy account(s)`);
     console.log('Account and credit indexes ready');
     const adminEmails = (process.env.ADMIN_EMAILS || '').split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
     if (adminEmails.length) await require('./models/User').updateMany({ email: { $in: adminEmails } }, { $set: { role: 'admin' } });

@@ -199,7 +199,7 @@ function AddForm({ onAdded }) {
       const skippedText = r.skipped.length ? ` Could not add: ${r.skipped.map((s) => `${host(s.url)}: ${s.reason}`).join(' ')}` : '';
       setMsg({ ok: r.skipped.length === 0, text: `${addedText}${skippedText}` });
       if (r.added.length) { setUrls(''); onAdded(); }
-    } catch (x) { setMsg({ ok: false, text: x.message }); }
+    } catch (x) { setMsg({ ok: false, text: x.message }); await onAdded(); }
     setBusy(false);
   };
 
@@ -229,14 +229,14 @@ function AddForm({ onAdded }) {
   );
 }
 
-function Item({ p, reload }) {
+function Item({ p, reload, creditsAvailable }) {
   const [edit, setEdit] = useState(false);
   const [count, setCount] = useState(p.frequency.count);
   const [period, setPeriod] = useState(p.frequency.period);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [showHistory, setShowHistory] = useState(false);
-  const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); await reload(); } catch (x) { setErr(x.message); } setBusy(false); };
+  const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); await reload(); } catch (x) { setErr(x.message); await reload(); } setBusy(false); };
 
   const dropped = p.lastPrice != null && p.currentPrice < p.lastPrice;
   const rose = p.lastPrice != null && p.currentPrice > p.lastPrice;
@@ -246,7 +246,9 @@ function Item({ p, reload }) {
       <div className="item-main">
         <a href={p.url} target="_blank" rel="noreferrer" className="title">{p.title || p.url}</a>
         <div className="muted small">{host(p.url)} · checked {ago(p.lastCheckedAt)} · next {p.active ? until(p.nextCheckAt) : 'paused'}</div>
-        {p.lastError && <div className="error small">{p.lastError}</div>}
+        {p.lastError && <div className="error small">{p.lastError.startsWith('Paused because your price check credits ran out.') && creditsAvailable > 0
+          ? `Paused when credits ran out. ${creditsAvailable} credits are available now; resume this product to restart checks.`
+          : p.lastError}</div>}
         {err && <div className="error small">{err}</div>}
         <div className="actions">
           {edit ? (
@@ -329,7 +331,7 @@ function AdminConsole() {
     {error && <p className="error small" role="alert">{error}</p>}
     <label className="admin-search">Find a user<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or email" /></label>
     <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>User</th><th>Credits</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-      {visible.map((u) => <tr key={u._id}><td><strong>{u.name}</strong><small>{u.email}</small></td><td>{u.hitsBalance} available<br/><small>{u.hitsUsed} used</small></td><td>{u.disabled ? 'Disabled' : u.emailVerified ? 'Active' : 'Email unverified'}</td><td><div className="admin-actions">
+      {visible.map((u) => <tr key={u._id}><td><strong>{u.name}</strong><small>{u.email}</small></td><td>{u.hitsBalance ?? 0} available<br/><small>{u.hitsUsed ?? 0} used</small></td><td>{u.disabled ? 'Disabled' : u.emailVerified ? 'Active' : 'Email unverified'}</td><td><div className="admin-actions">
         <button className="chip" onClick={() => openLedger(u)}>History</button>
         <select aria-label={`Grant credits to ${u.email}`} value="" disabled={!!busy} onChange={(e) => { const planId = e.target.value; if (planId) run(`grant-${u._id}`, () => api.adminGrant(u._id, planId)); }}><option value="">Grant pack…</option>{plans.map((p) => <option key={p.id} value={p.id}>{p.hits.toLocaleString()} hits</option>)}</select>
         <button className="chip" disabled={!!busy} onClick={() => run(`user-${u._id}`, () => api.adminUpdateUser(u._id, !u.disabled))}>{u.disabled ? 'Enable' : 'Disable'}</button>
@@ -350,6 +352,10 @@ export default function App() {
   const [checkoutNotice, setCheckoutNotice] = useState('');
 
   const load = useCallback(async () => { try { setItems(await api.list()); } catch { /* handled in api */ } }, []);
+  const reloadDashboard = useCallback(async () => {
+    await load();
+    try { const account = await api.me(); setUser(account.user); } catch { /* handled in api */ }
+  }, [load]);
 
   useEffect(() => {
     localStorage.removeItem('token'); // Clear the 1.0.1 bearer token after upgrading to cookie sessions.
@@ -390,7 +396,7 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     load();
-    const sync = async () => { load(); try { const r = await api.me(); setUser(r.user); } catch { /* handled by api */ } };
+    const sync = async () => { load(); try { const account = await api.me(); setUser(account.user); } catch { /* handled in api */ } };
     const t = setInterval(sync, 15000);
     return () => clearInterval(t);
   }, [user, load]);
@@ -408,12 +414,12 @@ export default function App() {
       </header>
       {checkoutNotice && <p className="panel checkout-notice" role="status">{checkoutNotice}</p>}
       <div className="grid">
-        <AddForm onAdded={load} />
+        <AddForm onAdded={reloadDashboard} />
         <section className="panel">
           <h2>Your products <span className="muted small">({items.length})</span></h2>
           {items.length === 0
             ? <p className="muted">Nothing tracked yet. Paste one or more product URLs on the left and choose how often to check.</p>
-            : <ul className="list">{items.map((p) => <Item key={p._id} p={p} reload={load} />)}</ul>}
+            : <ul className="list">{items.map((p) => <Item key={p._id} p={p} reload={reloadDashboard} creditsAvailable={user.hitsBalance || 0} />)}</ul>}
         </section>
       </div>
       <Membership user={user} refresh={async () => { const r = await api.me(); setUser(r.user); }} />

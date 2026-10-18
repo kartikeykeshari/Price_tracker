@@ -32,7 +32,11 @@ async function checkProduct(product, { force = false } = {}) {
   try {
     await billingSession.withTransaction(async () => {
       const user = await User.findOneAndUpdate(
-        { _id: product.user, disabled: false, hitsBalance: { $gt: 0 } },
+        {
+          _id: product.user,
+          $or: [{ disabled: false }, { disabled: { $exists: false } }],
+          hitsBalance: { $gt: 0 },
+        },
         { $inc: { hitsBalance: -1, hitsUsed: 1 } }, { new: true, session: billingSession },
       );
       if (!user) {
