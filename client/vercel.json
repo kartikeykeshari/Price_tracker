@@ -1,0 +1,10 @@
+
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://pricepulse-085m.onrender.com/api/:path*"
+    }
+  ]
+}
