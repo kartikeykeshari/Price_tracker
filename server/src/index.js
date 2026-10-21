@@ -34,7 +34,12 @@ validateConfig();
 
 const app = express();
 const clientOrigin = process.env.CLIENT_URL ? new URL(process.env.CLIENT_URL).origin : 'http://localhost:5173';
-const proxyHops = process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : 0;
+// Render terminates TLS and forwards requests through one trusted proxy hop.
+// Keep local/direct deployments at 0 unless they explicitly configure a proxy.
+const defaultProxyHops = process.env.NODE_ENV === 'production' ? 1 : 0;
+const proxyHops = process.env.TRUST_PROXY_HOPS !== undefined
+  ? Number(process.env.TRUST_PROXY_HOPS)
+  : defaultProxyHops;
 if (!Number.isInteger(proxyHops) || proxyHops < 0 || proxyHops > 10) throw new Error('TRUST_PROXY_HOPS must be an integer from 0 to 10');
 app.set('trust proxy', proxyHops);
 app.use(cors({

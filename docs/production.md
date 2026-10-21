@@ -12,7 +12,7 @@ Create `server/.env` from `server/.env.example` using the deployment's secret ma
 - `CLIENT_URL` to the exact HTTPS origin users open in their browser, with no path. Serve the client and API on the same site, preferably through one reverse proxy.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, and `SMTP_PASS`; production startup fails without these settings.
 - `PORT` if the host requires a specific listening port.
-- `TRUST_PROXY_HOPS` only when behind a known reverse proxy. Set it to the number of trusted proxy hops; leave it at `0` when users connect directly.
+- `TRUST_PROXY_HOPS` when the deployment needs an override. Production defaults to one trusted proxy hop (Render's default ingress); development defaults to `0`. Set the production value to the actual number of trusted proxies in front of the app. A wrong value can cause client IPs to be grouped together or read from an untrusted forwarded header.
 - `CASHFREE_ENV=production`, `CASHFREE_CLIENT_ID`, and `CASHFREE_CLIENT_SECRET` from the Cashfree production environment. Keep both credentials server-side. Register `https://your-domain/api/payments/webhook` in Cashfree for payment success events; webhook signatures are verified with the Cashfree client secret.
 - `ADMIN_EMAILS` as a comma-separated list of exact, verified account emails that should receive admin access. The server grants the admin role only to these configured addresses.
 - `FREE_TRIAL_SECRET` as a separate stable secret of at least 32 random bytes. It HMACs signup network prefixes for the one-time starter offer; do not rotate it casually, because old fingerprints will no longer match.
