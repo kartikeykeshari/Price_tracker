@@ -124,18 +124,29 @@ function Auth({ onAuth, initialNotice }) {
   };
 
   return (
-    <main className="auth">
+    <div className="site-frame">
+      <header className="site-nav">
+        <a className="brand-lockup" href="/" aria-label="PricePulse home"><img src="/pricepulse.svg" alt="" /><span>PRICE<span>PULSE</span></span></a>
+        <div className="nav-actions"><a href="#how-it-works" aria-label="How it works">⌕</a><a href="#pricepulse-faq" aria-label="Questions">♡</a><button className="nav-account" onClick={() => document.querySelector('.auth-card input')?.focus()} aria-label="Sign in">♙</button></div>
+      </header>
+      <main className="auth">
       <section className="auth-side">
         <div className="auth-marketing">
-          <p className="eyebrow">PRICE TRACKER · PRICE DROP ALERTS</p>
-          <h1>Track product prices. Know when they drop.</h1>
-          <p className="auth-lead">PricePulse watches product pages on a schedule, records price history, and emails you when a tracked price falls below its previous check.</p>
+          <p className="eyebrow">SMART SHOPPING <span aria-hidden="true">↗</span></p>
+          <h1>Unleash the power of Price<span>Pulse</span></h1>
+          <p className="auth-lead">A smarter way to track products, follow price changes, and know when it’s time to buy.</p>
+          <div className="hero-art" aria-hidden="true">
+            <div className="art-orbit orbit-one"></div><div className="art-orbit orbit-two"></div>
+            <div className="price-card-float"><span className="art-label">PRICE WATCH</span><strong>₹ 2,499</strong><span className="art-drop">↓ 18% this month</span><div className="art-chart"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+            <div className="art-tag"><img src="/pricepulse.svg" alt="" /></div>
+            <div className="art-note">Good time to buy <b>✦</b></div>
+          </div>
           <ul className="marketing-points">
-            <li>Track product URLs from supported online stores</li>
-            <li>Choose how often PricePulse checks each product</li>
-            <li>See price history and get email alerts for drops</li>
+            <li>Track products from supported online stores</li>
+            <li>Get notified when a price drops</li>
+            <li>See price history at a glance</li>
           </ul>
-          <button type="button" className="marketing-cta" onClick={() => setMode('register')}>Create an account — eligible users get 20 free checks</button>
+          <button type="button" className="marketing-cta" onClick={() => { setMode('register'); setErr(''); }}>Start tracking <span aria-hidden="true">→</span></button>
           <section className="marketing-details" aria-labelledby="how-it-works">
             <h2 id="how-it-works">How PricePulse works</h2>
             <ol>
@@ -154,7 +165,9 @@ function Auth({ onAuth, initialNotice }) {
         </div>
       </section>
       <form className="auth-card" onSubmit={submit}>
+        <p className="auth-card-kicker">WELCOME TO PRICEPULSE</p>
         <h2>{mode === 'login' ? 'Sign in' : 'Create your account'}</h2>
+        <p className="muted small auth-card-intro">{mode === 'login' ? 'Pick up where your price watch left off.' : 'Start watching prices in just a few steps.'}</p>
         {mode === 'register' && <p className="muted small">Verify your email to receive 20 free price checks. The starter offer is limited to one account per network.</p>}
         {mode === 'register' && <label>Name<input required value={f.name} onChange={set('name')} /></label>}
         <label>Email (price alerts go here)<input type="email" autoComplete="email" required value={f.email} onChange={set('email')} /></label>
@@ -178,7 +191,8 @@ function Auth({ onAuth, initialNotice }) {
           {mode === 'login' ? 'New here? Create an account' : 'Have an account? Sign in'}
         </button>
       </form>
-    </main>
+      </main>
+    </div>
   );
 }
 
@@ -186,7 +200,6 @@ function AddForm({ onAdded }) {
   const [urls, setUrls] = useState('');
   const [count, setCount] = useState(1);
   const [period, setPeriod] = useState('day');
-  const [selector, setSelector] = useState('');
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -194,7 +207,7 @@ function AddForm({ onAdded }) {
     e.preventDefault(); setMsg(null); setBusy(true);
     try {
       const list = urls.split(/[\n,\s]+/).map((u) => u.trim()).filter(Boolean);
-      const r = await api.add({ urls: list, frequency: { count: Number(count), period }, selector });
+      const r = await api.add({ urls: list, frequency: { count: Number(count), period } });
       const addedText = `Added ${r.added.length} ${r.added.length === 1 ? 'product' : 'products'}.`;
       const skippedText = r.skipped.length ? ` Could not add: ${r.skipped.map((s) => `${host(s.url)}: ${s.reason}`).join(' ')}` : '';
       setMsg({ ok: r.skipped.length === 0, text: `${addedText}${skippedText}` });
@@ -220,9 +233,6 @@ function AddForm({ onAdded }) {
           </select>
         </label>
       </div>
-      <label>Price CSS selector <span className="muted small">(optional, if the price isn't found automatically)</span>
-        <input value={selector} onChange={(e) => setSelector(e.target.value)} placeholder=".product-price" />
-      </label>
       {msg && <p className={msg.ok ? 'ok' : 'error'} role="status">{msg.text}</p>}
       <button className="btn" disabled={busy}>{busy ? 'Adding…' : 'Start tracking'}</button>
     </form>
@@ -234,9 +244,10 @@ function Item({ p, reload, creditsAvailable }) {
   const [count, setCount] = useState(p.frequency.count);
   const [period, setPeriod] = useState(p.frequency.period);
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState('');
   const [err, setErr] = useState('');
   const [showHistory, setShowHistory] = useState(false);
-  const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); await reload(); } catch (x) { setErr(x.message); await reload(); } setBusy(false); };
+  const run = async (fn, action = '') => { setBusy(true); setBusyAction(action); setErr(''); try { await fn(); await reload(); } catch (x) { setErr(x.message); await reload(); } finally { setBusy(false); setBusyAction(''); } };
 
   const dropped = p.lastPrice != null && p.currentPrice < p.lastPrice;
   const rose = p.lastPrice != null && p.currentPrice > p.lastPrice;
@@ -263,7 +274,10 @@ function Item({ p, reload, creditsAvailable }) {
           ) : (
             <>
               <button className="chip" onClick={() => setEdit(true)}>{p.frequency.count}× per {p.frequency.period} · edit</button>
-              <button className="chip" disabled={busy} onClick={() => run(() => api.check(p._id))}>Check now</button>
+              <button className={`chip check-button ${busyAction === 'check' ? 'is-checking' : ''}`} disabled={busy} aria-busy={busyAction === 'check'} onClick={() => run(() => api.check(p._id), 'check')}>
+                {busyAction === 'check' && <span className="spinner" aria-hidden="true" />}
+                <span>{busyAction === 'check' ? 'Checking…' : 'Check now'}</span>
+              </button>
               <button className="chip" disabled={busy} onClick={() => run(() => api.update(p._id, { active: !p.active }))}>{p.active ? 'Pause' : 'Resume'}</button>
               <button className="chip danger" disabled={busy} onClick={() => confirm('Stop tracking this product?') && run(() => api.remove(p._id))}>Remove</button>
             </>
@@ -407,12 +421,14 @@ export default function App() {
   return (
     <div className="shell">
       <header className="top">
-        <strong className="brand">PricePulse</strong>
-        <span className="muted small">Alerts go to {user.email}</span>
-        <span className="muted small">{user.hitsBalance || 0} checks available</span>
-        <button className="link" onClick={async () => { try { await api.logout(); } finally { setUser(null); setItems([]); } }}>Sign out</button>
+        <a className="brand-lockup" href="/" aria-label="PricePulse home"><img src="/pricepulse.svg" alt="" /><span>PRICE<span>PULSE</span></span></a>
+        <div className="top-account"><span className="muted small">{user.email}</span><span className="credit-pill">{user.hitsBalance || 0} checks</span><button className="chip" onClick={async () => { try { await api.logout(); } finally { setUser(null); setItems([]); } }}>Sign out</button></div>
       </header>
       {checkoutNotice && <p className="panel checkout-notice" role="status">{checkoutNotice}</p>}
+      <section className="dashboard-hero">
+        <div><p className="eyebrow">SHOP SMARTER · SAVE WITH EVERY DROP</p><h1>Good deals come to those who <span>track.</span></h1><p>Keep an eye on your favorite products. We’ll watch the price history and let you know when it changes.</p></div>
+        <div className="dashboard-art" aria-hidden="true"><div className="dash-sun"></div><div className="dash-ticket"><span>PRICE DROP</span><strong>↓ 18%</strong><small>Worth the wait.</small><div className="dash-spark">⌁</div></div><div className="dash-star">✳</div></div>
+      </section>
       <div className="grid">
         <AddForm onAdded={reloadDashboard} />
         <section className="panel">
