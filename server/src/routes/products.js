@@ -9,7 +9,6 @@ const { validatePublicUrl } = require('../services/safeUrl');
 
 router.use(auth);
 const addLimit = rateLimit({ name: 'product-add', limit: 30, windowMs: 60 * 60 * 1000, key: (req) => req.userId });
-const checkLimit = rateLimit({ name: 'product-check', limit: 12, windowMs: 60 * 1000, key: (req) => req.userId });
 
 const validFreq = (f) =>
   f && Number.isInteger(+f.count) && +f.count >= 1 && ['day', 'week', 'month'].includes(f.period);
@@ -96,7 +95,7 @@ router.patch('/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-router.post('/:id/check', checkLimit, async (req, res, next) => {
+router.post('/:id/check', async (req, res, next) => {
   try {
     if (!validId(req.params.id)) return res.status(400).json({ message: 'Invalid product ID' });
     const p = await Product.findOne({ _id: req.params.id, user: req.userId });
